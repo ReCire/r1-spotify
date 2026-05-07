@@ -542,17 +542,17 @@ document.addEventListener('touchmove', (e) => {
 document.addEventListener('touchend', () => {
   // Apply momentum based on release velocity with easing
   const releaseVelocity = touchVelocity; // px/ms
-  if (Math.abs(releaseVelocity) < 0.3) return; // too slow, no momentum
+  if (Math.abs(releaseVelocity) < 0.05) return; // very low threshold for momentum
 
-  let vel = releaseVelocity * 16; // convert to px/frame (~16ms)
+  let vel = releaseVelocity * 30; // more aggressive momentum multiplier
   let accum = 0;
-  const friction = 0.94; // slightly less friction for smoother deceleration
+  const friction = 0.95; // less friction for longer coasting
   const startVel = vel;
   let frameCount = 0;
 
   function momentumStep() {
     frameCount++;
-    const decayProgress = Math.min(frameCount / 30, 1); // 30 frames to full decay
+    const decayProgress = Math.min(frameCount / 40, 1); // 40 frames to full decay
     const easedFriction = 1 - (1 - friction) * easeOutCubic(decayProgress);
     
     accum += vel;
@@ -566,7 +566,7 @@ document.addEventListener('touchend', () => {
       }
     }
     vel *= easedFriction;
-    if (Math.abs(vel) > 0.5) {
+    if (Math.abs(vel) > 0.1) { // lower cutoff for longer scrolling
       momentumRAF = requestAnimationFrame(momentumStep);
     }
   }
