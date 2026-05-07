@@ -439,6 +439,29 @@ function handleScrollDown() {
   }
 }
 
+// Scroll index directly without render (for batched touch updates)
+function scrollIndexBy(delta) {
+  if (isPlaying) {
+    adjustVolume(delta > 0 ? -0.05 * delta : 0.05 * Math.abs(delta));
+    return;
+  }
+  if (currentTab === 'mixtapes') {
+    mixtapeScrollIndex = Math.max(0, Math.min(MIXTAPES.length - 1, mixtapeScrollIndex + delta));
+  }
+}
+
+// Throttled render: only one render per animation frame
+let renderScheduled = false;
+function scheduleRender() {
+  if (!renderScheduled) {
+    renderScheduled = true;
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      render();
+    });
+  }
+}
+
 // ============ Icons ============
 
 function playIcon() {
@@ -458,49 +481,13 @@ let touchLastTime = 0;
 let touchVelocity = 0;
 let touchAccumulated = 0;
 let momentumRAF = null;
-let easingRAF = null;
-const TOUCH_STEP_PX = 50; // pixels of drag per scroll step
-
-// Easing function: ease-out-cubic
-function easeOutCubic(t) {
-  return 1 - Math.pow(1 - t, 3);
-}
+const TOUCH_STEP_PX = 40; // pixels of drag per scroll step
 
 function cancelMomentum() {
   if (momentumRAF) {
     cancelAnimationFrame(momentumRAF);
     momentumRAF = null;
   }
-  if (easingRAF) {
-    cancelAnimationFrame(easingRAF);
-    easingRAF = null;
-  }
-}
-
-// Smooth eased scroll transition
-function smoothScrollStep(direction) {
-  const duration = 150; // ms
-  const startTime = Date.now();
-  
-  function animate() {
-    const elapsed = Date.now() - startTime;
-    const progress = Math.min(elapsed / duration, 1);
-    const eased = easeOutCubic(progress);
-    
-    if (progress >= 1) {
-      if (direction > 0) handleScrollDown();
-      else handleScrollUp();
-      easingRAF = null;
-    } else {
-      easingRAF = requestAnimationFrame(animate);
-    }
-  }
-  
-  // Fire immediately, then animate
-  if (direction > 0) handleScrollDown();
-  else handleScrollUp();
-  
-  easingRAF = requestAnimationFrame(animate);
 }
 
 document.addEventListener('touchstart', (e) => {
@@ -518,56 +505,66 @@ document.addEventListener('touchmove', (e) => {
   const now = Date.now();
   const dt = now - touchLastTime;
 
-  // Track velocity (px/ms)
+  // Track velocity (px/ms), smoothed
   if (dt > 0) {
-    touchVelocity = (touchLastY - y) / dt;
+    const instantVel = (touchLastY - y) / dt;
+    touchVelocity = touchVelocity * 0.3 + instantVel * 0.7;
   }
 
-  // Accumulate drag distance and fire scroll steps with easing
+  // Accumulate drag distance and advance index (no render per step)
   touchAccumulated += (touchLastY - y);
+  let stepped = false;
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      handleScrollDown();
+      scrollIndexBy(1);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      handleScrollUp();
+      scrollIndexBy(-1);
       touchAccumulated += TOUCH_STEP_PX;
     }
+    stepped = true;
   }
+  if (stepped) scheduleRender();
 
   touchLastY = y;
   touchLastTime = now;
 }, { passive: true });
 
 document.addEventListener('touchend', () => {
-  // Apply momentum based on release velocity with easing
-  const releaseVelocity = touchVelocity; // px/ms
-  if (Math.abs(releaseVelocity) < 0.05) return; // very low threshold for momentum
+  // Momentum: compute total items to scroll based on velocity, then animate through them
+  const vel = touchVelocity; // px/ms (positive = scrolling down)
+  if (Math.abs(vel) < 0.1) return;
 
-  let vel = releaseVelocity * 30; // more aggressive momentum multiplier
-  let accum = 0;
-  const friction = 0.95; // less friction for longer coasting
-  const startVel = vel;
-  let frameCount = 0;
+  // Calculate total items to coast through based on velocity
+  const totalItems = Math.round(Math.abs(vel) * 15);
+  if (totalItems < 1) return;
+
+  const direction = vel > 0 ? 1 : -1;
+  let itemsScrolled = 0;
+  const startTime = Date.now();
+  // Duration scales with items but caps out
+  const duration = Math.min(80 + totalItems * 60, 800);
+
+  function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+  }
 
   function momentumStep() {
-    frameCount++;
-    const decayProgress = Math.min(frameCount / 40, 1); // 40 frames to full decay
-    const easedFriction = 1 - (1 - friction) * easeOutCubic(decayProgress);
-    
-    accum += vel;
-    while (Math.abs(accum) >= TOUCH_STEP_PX) {
-      if (accum > 0) {
-        handleScrollDown();
-        accum -= TOUCH_STEP_PX;
-      } else {
-        handleScrollUp();
-        accum += TOUCH_STEP_PX;
-      }
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const easedProgress = easeOutCubic(progress);
+    const targetItems = Math.round(easedProgress * totalItems);
+
+    while (itemsScrolled < targetItems) {
+      scrollIndexBy(direction);
+      itemsScrolled++;
     }
-    vel *= easedFriction;
-    if (Math.abs(vel) > 0.1) { // lower cutoff for longer scrolling
+    scheduleRender();
+
+    if (progress < 1) {
       momentumRAF = requestAnimationFrame(momentumStep);
+    } else {
+      momentumRAF = null;
     }
   }
   momentumRAF = requestAnimationFrame(momentumStep);
