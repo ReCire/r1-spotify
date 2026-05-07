@@ -3,6 +3,7 @@
 A native streaming app for the Rabbit R1 that brings NTS Radio's live channels and infinite mixtapes to your device.
 
 ![NTS Radio R1 - Live View](metadata/screenshot.jpg)
+
 ## Features
 
 - **Live Streaming** — Listen to NTS 1 and NTS 2 live channels
@@ -18,7 +19,7 @@ A native streaming app for the Rabbit R1 that brings NTS Radio's live channels a
 
 ### Via QR Code (Recommended)
 
-1. Open `apps/app/qr.html` in your browser (or serve the project locally with `npm run dev`)
+1. Open the QR code page: https://app-murex-seven-71.vercel.app/qr.html
 2. Point your R1's camera at the QR code
 3. The R1 will register the creation and add it to your creations list
 
