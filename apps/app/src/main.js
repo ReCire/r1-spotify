@@ -181,11 +181,11 @@ function renderLive(app) {
     });
     overlay.appendChild(playBtn);
 
-    // Bottom info: description (1 line default, more when expanded)
-    if (station.description) {
+    // Bottom info: description (only show on expanded/active card)
+    if (station.description && isActive) {
       const bottomInfo = document.createElement('div');
-      bottomInfo.className = `card-bottom ${isActive ? 'expanded' : ''}`;
-      bottomInfo.innerHTML = `<div class="card-desc">${truncate(station.description, isActive ? 120 : 50)}</div>`;
+      bottomInfo.className = 'card-bottom expanded';
+      bottomInfo.innerHTML = `<div class="card-desc">${truncate(station.description, 120)}</div>`;
       overlay.appendChild(bottomInfo);
     }
 
