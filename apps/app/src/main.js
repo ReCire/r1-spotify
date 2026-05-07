@@ -449,7 +449,7 @@ function pauseIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`;
 }
 
-// ============ Touch Scroll with Momentum ============
+// ============ Touch Scroll with Momentum & Easing ============
 
 let touchStartY = 0;
 let touchStartX = 0;
@@ -458,13 +458,49 @@ let touchLastTime = 0;
 let touchVelocity = 0;
 let touchAccumulated = 0;
 let momentumRAF = null;
+let easingRAF = null;
 const TOUCH_STEP_PX = 50; // pixels of drag per scroll step
+
+// Easing function: ease-out-cubic
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 function cancelMomentum() {
   if (momentumRAF) {
     cancelAnimationFrame(momentumRAF);
     momentumRAF = null;
   }
+  if (easingRAF) {
+    cancelAnimationFrame(easingRAF);
+    easingRAF = null;
+  }
+}
+
+// Smooth eased scroll transition
+function smoothScrollStep(direction) {
+  const duration = 150; // ms
+  const startTime = Date.now();
+  
+  function animate() {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = easeOutCubic(progress);
+    
+    if (progress >= 1) {
+      if (direction > 0) handleScrollDown();
+      else handleScrollUp();
+      easingRAF = null;
+    } else {
+      easingRAF = requestAnimationFrame(animate);
+    }
+  }
+  
+  // Fire immediately, then animate
+  if (direction > 0) handleScrollDown();
+  else handleScrollUp();
+  
+  easingRAF = requestAnimationFrame(animate);
 }
 
 document.addEventListener('touchstart', (e) => {
@@ -487,7 +523,7 @@ document.addEventListener('touchmove', (e) => {
     touchVelocity = (touchLastY - y) / dt;
   }
 
-  // Accumulate drag distance and fire scroll steps
+  // Accumulate drag distance and fire scroll steps with easing
   touchAccumulated += (touchLastY - y);
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
@@ -504,15 +540,21 @@ document.addEventListener('touchmove', (e) => {
 }, { passive: true });
 
 document.addEventListener('touchend', () => {
-  // Apply momentum based on release velocity
+  // Apply momentum based on release velocity with easing
   const releaseVelocity = touchVelocity; // px/ms
   if (Math.abs(releaseVelocity) < 0.3) return; // too slow, no momentum
 
   let vel = releaseVelocity * 16; // convert to px/frame (~16ms)
   let accum = 0;
-  const friction = 0.92;
+  const friction = 0.94; // slightly less friction for smoother deceleration
+  const startVel = vel;
+  let frameCount = 0;
 
   function momentumStep() {
+    frameCount++;
+    const decayProgress = Math.min(frameCount / 30, 1); // 30 frames to full decay
+    const easedFriction = 1 - (1 - friction) * easeOutCubic(decayProgress);
+    
     accum += vel;
     while (Math.abs(accum) >= TOUCH_STEP_PX) {
       if (accum > 0) {
@@ -523,8 +565,8 @@ document.addEventListener('touchend', () => {
         accum += TOUCH_STEP_PX;
       }
     }
-    vel *= friction;
-    if (Math.abs(vel) > 1) {
+    vel *= easedFriction;
+    if (Math.abs(vel) > 0.5) {
       momentumRAF = requestAnimationFrame(momentumStep);
     }
   }
