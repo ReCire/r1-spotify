@@ -449,29 +449,86 @@ function pauseIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`;
 }
 
-// ============ Touch Swipe Support ============
+// ============ Touch Scroll with Momentum ============
 
 let touchStartY = 0;
 let touchStartX = 0;
-const SWIPE_THRESHOLD = 30;
+let touchLastY = 0;
+let touchLastTime = 0;
+let touchVelocity = 0;
+let touchAccumulated = 0;
+let momentumRAF = null;
+const TOUCH_STEP_PX = 50; // pixels of drag per scroll step
+
+function cancelMomentum() {
+  if (momentumRAF) {
+    cancelAnimationFrame(momentumRAF);
+    momentumRAF = null;
+  }
+}
 
 document.addEventListener('touchstart', (e) => {
+  cancelMomentum();
   touchStartY = e.touches[0].clientY;
   touchStartX = e.touches[0].clientX;
+  touchLastY = touchStartY;
+  touchLastTime = Date.now();
+  touchVelocity = 0;
+  touchAccumulated = 0;
 }, { passive: true });
 
-document.addEventListener('touchend', (e) => {
-  const deltaY = touchStartY - e.changedTouches[0].clientY;
-  const deltaX = touchStartX - e.changedTouches[0].clientX;
+document.addEventListener('touchmove', (e) => {
+  const y = e.touches[0].clientY;
+  const now = Date.now();
+  const dt = now - touchLastTime;
 
-  // Only handle vertical swipes (ignore horizontal)
-  if (Math.abs(deltaY) > SWIPE_THRESHOLD && Math.abs(deltaY) > Math.abs(deltaX)) {
-    if (deltaY > 0) {
+  // Track velocity (px/ms)
+  if (dt > 0) {
+    touchVelocity = (touchLastY - y) / dt;
+  }
+
+  // Accumulate drag distance and fire scroll steps
+  touchAccumulated += (touchLastY - y);
+  while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
+    if (touchAccumulated > 0) {
       handleScrollDown();
+      touchAccumulated -= TOUCH_STEP_PX;
     } else {
       handleScrollUp();
+      touchAccumulated += TOUCH_STEP_PX;
     }
   }
+
+  touchLastY = y;
+  touchLastTime = now;
+}, { passive: true });
+
+document.addEventListener('touchend', () => {
+  // Apply momentum based on release velocity
+  const releaseVelocity = touchVelocity; // px/ms
+  if (Math.abs(releaseVelocity) < 0.3) return; // too slow, no momentum
+
+  let vel = releaseVelocity * 16; // convert to px/frame (~16ms)
+  let accum = 0;
+  const friction = 0.92;
+
+  function momentumStep() {
+    accum += vel;
+    while (Math.abs(accum) >= TOUCH_STEP_PX) {
+      if (accum > 0) {
+        handleScrollDown();
+        accum -= TOUCH_STEP_PX;
+      } else {
+        handleScrollUp();
+        accum += TOUCH_STEP_PX;
+      }
+    }
+    vel *= friction;
+    if (Math.abs(vel) > 1) {
+      momentumRAF = requestAnimationFrame(momentumStep);
+    }
+  }
+  momentumRAF = requestAnimationFrame(momentumStep);
 }, { passive: true });
 
 // ============ R1 Hardware Events ============
