@@ -7,13 +7,13 @@ const STREAMS = {
 
 const MIXTAPES = [
   { id: 'mx-poolside', name: 'Poolside', desc: 'Balearic, boogie, and sophisti-pop for poolsides, beaches and car stereos.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape4', artwork: 'https://media3.ntslive.co.uk/resize/200x200/cf5afb01-5a68-4fa0-a1c6-415b35d09ed6_1542931200.jpeg' },
-  { id: 'mx-slow-focus', name: 'Slow Focus', desc: 'Meditative, relaxing and beatless: ambient, drone and ragas.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape', artwork: 'https://media3.ntslive.co.uk/resize/200x200/cf5afb01-5a68-4fa0-a1c6-415b35d09ed6_1542931200.jpeg' },
+  { id: 'mx-slow-focus', name: 'Slow Focus', desc: 'Meditative, relaxing and beatless: ambient, drone and ragas.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape', artwork: 'https://media3.ntslive.co.uk/resize/200x200/01f7cbe6-235f-4e33-8f2f-70152c91edf1_1542931200.jpeg' },
   { id: 'mx-low-key', name: 'Low Key', desc: 'Keeping it simple with lo-fi hip-hop and smooth R\'n\'B.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape2', artwork: 'https://media3.ntslive.co.uk/resize/200x200/b667c612-1ef6-4bfd-ae87-0cec0a19629d_1626307200.jpeg' },
   { id: 'mx-memory-lane', name: 'Memory Lane', desc: 'Turn on, tune in, drop out.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape6', artwork: 'https://media3.ntslive.co.uk/resize/200x200/f889399d-6277-46e2-9be9-840bbdd25cc5_1560470400.jpeg' },
-  { id: 'mx-4-to-the-floor', name: '4 To The Floor', desc: 'House and techno from past to present.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape5', artwork: 'https://media3.ntslive.co.uk/resize/200x200/f889399d-6277-46e2-9be9-840bbdd25cc5_1560470400.jpeg' },
+  { id: 'mx-4-to-the-floor', name: '4 To The Floor', desc: 'House and techno from past to present.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape5', artwork: 'https://media3.ntslive.co.uk/resize/200x200/c3bad52d-418b-4bf6-aff5-eea3b9ff1186_1542931200.jpeg' },
   { id: 'mx-island-time', name: 'Island Time', desc: 'Easy skanking – reggae, dub, and plenty more.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape21', artwork: 'https://media3.ntslive.co.uk/resize/200x200/68541b02-903c-4caf-bba2-538d0b9bfedc_1590451200.jpeg' },
-  { id: 'mx-the-tube', name: 'The Tube', desc: 'Oddball post-punk, industrial provocation, and minimal wave.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape26', artwork: 'https://media3.ntslive.co.uk/resize/200x200/68541b02-903c-4caf-bba2-538d0b9bfedc_1590451200.jpeg' },
-  { id: 'mx-sheet-music', name: 'Sheet Music', desc: 'The best of classical and contemporary composition.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape35', artwork: 'https://media3.ntslive.co.uk/resize/200x200/acc3ad65-05bd-495d-90cb-f5d81221464b_1542931200.jpeg' },
+  { id: 'mx-the-tube', name: 'The Tube', desc: 'Oddball post-punk, industrial provocation, and minimal wave.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape26', artwork: 'https://media3.ntslive.co.uk/resize/200x200/f3657c6b-aa6b-4ad9-9c12-d9e9cbe7f68d_1626220800.jpeg' },
+  { id: 'mx-sheet-music', name: 'Sheet Music', desc: 'The best of classical and contemporary composition.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape35', artwork: 'https://media3.ntslive.co.uk/resize/200x200/fe3dc346-2549-44cc-96c7-c3117056aa74_1668038400.jpeg' },
   { id: 'mx-feelings', name: 'Feelings', desc: 'Sweet soul, gospel, boogie, and beyond.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape27', artwork: 'https://media3.ntslive.co.uk/resize/200x200/53026366-cf7c-4a57-af5c-c894d2375dc6_1626220800.jpeg' },
   { id: 'mx-expansions', name: 'Expansions', desc: 'Jazz and its many mind-expanding variations.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape3', artwork: 'https://media3.ntslive.co.uk/resize/200x200/acc3ad65-05bd-495d-90cb-f5d81221464b_1542931200.jpeg' },
   { id: 'mx-rap-house', name: 'Rap House', desc: '808s and champagne.', stream: 'https://stream-mixtape-geo.ntslive.net/mixtape22', artwork: 'https://media3.ntslive.co.uk/resize/200x200/916a2aa3-dcc5-4eb6-abea-b2f1914fb49a_1590451200.jpeg' },
@@ -448,6 +448,31 @@ function playIcon() {
 function pauseIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`;
 }
+
+// ============ Touch Swipe Support ============
+
+let touchStartY = 0;
+let touchStartX = 0;
+const SWIPE_THRESHOLD = 30;
+
+document.addEventListener('touchstart', (e) => {
+  touchStartY = e.touches[0].clientY;
+  touchStartX = e.touches[0].clientX;
+}, { passive: true });
+
+document.addEventListener('touchend', (e) => {
+  const deltaY = touchStartY - e.changedTouches[0].clientY;
+  const deltaX = touchStartX - e.changedTouches[0].clientX;
+
+  // Only handle vertical swipes (ignore horizontal)
+  if (Math.abs(deltaY) > SWIPE_THRESHOLD && Math.abs(deltaY) > Math.abs(deltaX)) {
+    if (deltaY > 0) {
+      handleScrollDown();
+    } else {
+      handleScrollUp();
+    }
+  }
+}, { passive: true });
 
 // ============ R1 Hardware Events ============
 
