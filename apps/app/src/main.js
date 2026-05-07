@@ -442,7 +442,7 @@ function handleScrollDown() {
 // ============ Icons ============
 
 function playIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`;
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="8,5 19,12 8,19"/></svg>`;
 }
 
 function pauseIcon() {
