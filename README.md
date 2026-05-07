@@ -2,10 +2,7 @@
 
 A native streaming app for the Rabbit R1 that brings NTS Radio's live channels and infinite mixtapes to your device.
 
-![NTS Radio R1 - Live View](metadata/screenshot-1.jpg)
-
-![NTS Radio R1 - Mixtapes View](metadata/screenshot-2.jpg)
-
+![NTS Radio R1 - Live View](metadata/screenshot.jpg)
 ## Features
 
 - **Live Streaming** — Listen to NTS 1 and NTS 2 live channels
