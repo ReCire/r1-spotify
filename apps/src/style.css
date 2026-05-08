@@ -186,6 +186,10 @@ html, body {
   flex-shrink: 0;
 }
 
+.list-item-art.round {
+  border-radius: 50%;
+}
+
 .list-item-num {
   width: 18px;
   font-size: 9px;
@@ -230,6 +234,283 @@ html, body {
   height: 100%;
   font-size: 10px;
   color: #535353;
+}
+
+/* ========== Home Container & Cards ========== */
+.home-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  padding: 0 0 4px;
+}
+
+.home-container::-webkit-scrollbar {
+  display: none;
+}
+
+.home-section {
+  margin-bottom: 10px;
+}
+
+.section-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  padding: 4px 10px 4px;
+  letter-spacing: -0.2px;
+}
+
+.card-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 10px;
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+}
+
+.card-row::-webkit-scrollbar {
+  display: none;
+}
+
+.card {
+  flex-shrink: 0;
+  width: 90px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #1a1a1a;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  scroll-snap-align: start;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.card.focused {
+  transform: scale(1.04);
+  box-shadow: 0 0 0 1.5px #1DB954;
+}
+
+.card:active {
+  transform: scale(0.96);
+}
+
+.card-art {
+  width: 90px;
+  height: 70px;
+  background-size: cover;
+  background-position: center;
+  background-color: #282828;
+}
+
+.card-info {
+  padding: 4px 6px;
+}
+
+.card-name {
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.card-sub {
+  font-size: 7px;
+  color: #b3b3b3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ========== Artist View ========== */
+.artist-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.artist-hero {
+  width: 240px;
+  height: 200px;
+  background-size: cover;
+  background-position: center top;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.artist-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.1) 40%, rgba(18,18,18,0.95) 85%, #121212 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.artist-back {
+  width: 22px;
+  height: 22px;
+  background: rgba(0,0,0,0.5);
+  border: none;
+  color: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.artist-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.artist-hero-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.artist-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+}
+
+.artist-stats {
+  font-size: 8px;
+  color: #b3b3b3;
+  margin-top: 2px;
+}
+
+.artist-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.artist-play-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #1DB954;
+  border: none;
+  color: #000;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.artist-play-btn:active {
+  background: #1ed760;
+  transform: scale(0.9);
+}
+
+.artist-play-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.artist-sections {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.artist-expand {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #b3b3b3;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: #1a1a1a;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.artist-expand:active {
+  background: #282828;
+}
+
+.artist-expand svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ========== Onboarding Overlay ========== */
+.onboarding-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.onboard-content {
+  text-align: center;
+  padding: 16px;
+}
+
+.onboard-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #1DB954;
+}
+
+.onboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9px;
+  color: #e0e0e0;
+  margin-bottom: 8px;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 0 12px;
+}
+
+.onboard-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #1DB954;
+}
+
+.onboard-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.onboard-dismiss {
+  margin-top: 14px;
+  font-size: 8px;
+  color: #535353;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ========== Equalizer Bars (playing indicator) ========== */

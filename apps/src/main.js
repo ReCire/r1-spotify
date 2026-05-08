@@ -2,7 +2,7 @@
 // ============ Configuration ============
 
 const CONFIG = {
-  clientId: '8ef09899795a4fdab465bfa82c97c534', // Set your Spotify Client ID here
+  clientId: '8ef09899795a4fdab465bfa82c97c534',
   redirectUri: `${window.location.origin}/callback.html`,
   scopes: [
     'streaming',
@@ -13,6 +13,9 @@ const CONFIG = {
     'user-read-currently-playing',
     'user-read-recently-played',
     'user-library-read',
+    'user-follow-read',
+    'user-follow-modify',
+    'user-top-read',
     'playlist-read-private',
     'playlist-read-collaborative'
   ].join(' ')
@@ -24,7 +27,7 @@ let accessToken = null;
 let tokenExpiry = 0;
 let player = null;
 let deviceId = null;
-let currentView = 'login'; // login | home | playlist | nowplaying | search
+let currentView = 'login';
 let isPlaying = false;
 let currentTrack = null;
 let progressMs = 0;
@@ -37,6 +40,12 @@ let scrollIndex = 0;
 let selectedPlaylist = null;
 let progressInterval = null;
 let viewStack = [];
+let homeSections = [];
+let artistData = null;
+let artistDiscography = null;
+let albumTracks = [];
+let selectedAlbum = null;
+let onboardingShown = false;
 
 // ============ Storage (R1 creationStorage or localStorage) ============
 
@@ -409,10 +418,10 @@ async function fetchPlaylists() {
 }
 
 async function fetchPlaylistTracks(playlistId) {
-  const data = await api(`/playlists/${playlistId}/tracks?limit=50`);
+  const data = await api(`/playlists/${playlistId}/tracks?limit=100&fields=items(track(name,uri,duration_ms,artists(name),album(name,images,uri)))`);
   if (data && data.items) {
     playlistTracks = data.items
-      .filter(item => item.track)
+      .filter(item => item.track && item.track.uri)
       .map(item => ({
         name: item.track.name,
         artist: item.track.artists?.map(a => a.name).join(', ') || '',
@@ -421,21 +430,217 @@ async function fetchPlaylistTracks(playlistId) {
         uri: item.track.uri,
         durationMs: item.track.duration_ms
       }));
+  } else {
+    playlistTracks = [];
+  }
+}
+
+async function fetchHomeSections() {
+  homeSections = [];
+
+  // Recently played
+  const recent = await api('/me/player/recently-played?limit=8');
+  if (recent?.items?.length) {
+    const seen = new Set();
+    const tracks = recent.items.filter(i => {
+      if (seen.has(i.track?.uri)) return false;
+      seen.add(i.track?.uri);
+      return true;
+    }).slice(0, 6);
+    homeSections.push({
+      title: 'Recently Played',
+      items: tracks.map(i => ({
+        name: i.track.name,
+        subtitle: i.track.artists?.[0]?.name || '',
+        image: i.track.album?.images?.[0]?.url || '',
+        type: 'track',
+        uri: i.track.uri,
+        contextUri: i.context?.uri || i.track.album?.uri || ''
+      }))
+    });
+  }
+
+  // User's top tracks
+  const topTracks = await api('/me/top/tracks?limit=6&time_range=short_term');
+  if (topTracks?.items?.length) {
+    homeSections.push({
+      title: 'Your Top Tracks',
+      items: topTracks.items.map(t => ({
+        name: t.name,
+        subtitle: t.artists?.[0]?.name || '',
+        image: t.album?.images?.[0]?.url || '',
+        type: 'track',
+        uri: t.uri,
+        contextUri: t.album?.uri || ''
+      }))
+    });
+  }
+
+  // User's playlists as "Made for You"
+  if (playlists.length) {
+    const madeFor = playlists.filter(p => p.owner === 'Spotify' || p.name.includes('Mix') || p.name.includes('Discover'));
+    if (madeFor.length) {
+      homeSections.push({
+        title: 'Made for You',
+        items: madeFor.slice(0, 6).map(p => ({
+          name: p.name,
+          subtitle: p.owner,
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }))
+      });
+    }
+  }
+
+  // User playlists
+  if (playlists.length) {
+    homeSections.push({
+      title: 'Your Library',
+      items: playlists.slice(0, 8).map(p => ({
+        name: p.name,
+        subtitle: `${p.trackCount} tracks`,
+        image: p.image,
+        type: 'playlist',
+        uri: p.uri,
+        id: p.id
+      }))
+    });
+  }
+
+  // Top artists
+  const topArtists = await api('/me/top/artists?limit=6&time_range=medium_term');
+  if (topArtists?.items?.length) {
+    homeSections.push({
+      title: 'Your Top Artists',
+      items: topArtists.items.map(a => ({
+        name: a.name,
+        subtitle: `${formatFollowers(a.followers?.total)} followers`,
+        image: a.images?.[0]?.url || '',
+        type: 'artist',
+        id: a.id,
+        uri: a.uri
+      }))
+    });
+  }
+
+  // New releases
+  const newReleases = await api('/browse/new-releases?limit=6');
+  if (newReleases?.albums?.items?.length) {
+    homeSections.push({
+      title: 'New Releases',
+      items: newReleases.albums.items.map(a => ({
+        name: a.name,
+        subtitle: a.artists?.[0]?.name || '',
+        image: a.images?.[0]?.url || '',
+        type: 'album',
+        id: a.id,
+        uri: a.uri
+      }))
+    });
+  }
+}
+
+async function fetchArtist(artistId) {
+  const [artist, topTracks, albums, related] = await Promise.all([
+    api(`/artists/${artistId}`),
+    api(`/artists/${artistId}/top-tracks?market=from_token`),
+    api(`/artists/${artistId}/albums?include_groups=album,single&limit=20`),
+    api(`/artists/${artistId}/related-artists`)
+  ]);
+
+  if (!artist) return null;
+
+  artistData = {
+    id: artist.id,
+    name: artist.name,
+    image: artist.images?.[0]?.url || '',
+    followers: artist.followers?.total || 0,
+    genres: artist.genres || [],
+    popularity: artist.popularity || 0,
+    uri: artist.uri,
+    topTracks: (topTracks?.tracks || []).slice(0, 5).map(t => ({
+      name: t.name,
+      artist: t.artists?.map(a => a.name).join(', ') || '',
+      artwork: t.album?.images?.[0]?.url || '',
+      uri: t.uri,
+      contextUri: t.album?.uri || '',
+      durationMs: t.duration_ms
+    })),
+    albums: (albums?.items || []).filter(a => a.album_group === 'album').slice(0, 10).map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
+      year: a.release_date?.substring(0, 4) || '', type: a.album_type
+    })),
+    singles: (albums?.items || []).filter(a => a.album_group === 'single').slice(0, 10).map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
+      year: a.release_date?.substring(0, 4) || '', type: 'single'
+    })),
+    related: (related?.artists || []).slice(0, 6).map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
+      followers: a.followers?.total || 0
+    }))
+  };
+  return artistData;
+}
+
+async function fetchAlbumTracks(albumId) {
+  const data = await api(`/albums/${albumId}`);
+  if (data) {
+    selectedAlbum = {
+      id: data.id,
+      name: data.name,
+      image: data.images?.[0]?.url || '',
+      artist: data.artists?.map(a => a.name).join(', ') || '',
+      uri: data.uri,
+      year: data.release_date?.substring(0, 4) || ''
+    };
+    albumTracks = (data.tracks?.items || []).map(t => ({
+      name: t.name,
+      artist: t.artists?.map(a => a.name).join(', ') || '',
+      uri: t.uri,
+      durationMs: t.duration_ms,
+      artwork: data.images?.[0]?.url || ''
+    }));
   }
 }
 
 async function searchSpotify(query) {
   if (!query.trim()) { searchResults = []; return; }
-  const data = await api(`/search?q=${encodeURIComponent(query)}&type=track,playlist&limit=10`);
+  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=6`);
   if (!data) return;
 
   searchResults = [];
+  if (data.artists?.items) {
+    data.artists.items.forEach(a => {
+      searchResults.push({
+        type: 'artist',
+        name: a.name,
+        subtitle: `${formatFollowers(a.followers?.total)} followers`,
+        artwork: a.images?.[0]?.url || '',
+        id: a.id,
+        uri: a.uri
+      });
+    });
+  }
+  if (data.albums?.items) {
+    data.albums.items.forEach(a => {
+      searchResults.push({
+        type: 'album',
+        name: a.name,
+        subtitle: a.artists?.[0]?.name || '',
+        artwork: a.images?.[0]?.url || '',
+        id: a.id,
+        uri: a.uri
+      });
+    });
+  }
   if (data.tracks?.items) {
     data.tracks.items.forEach(t => {
       searchResults.push({
         type: 'track',
         name: t.name,
-        artist: t.artists?.map(a => a.name).join(', ') || '',
+        subtitle: t.artists?.map(a => a.name).join(', ') || '',
         artwork: t.album?.images?.[0]?.url || '',
         uri: t.uri,
         contextUri: t.album?.uri || ''
@@ -443,17 +648,24 @@ async function searchSpotify(query) {
     });
   }
   if (data.playlists?.items) {
-    data.playlists.items.forEach(p => {
-      if (p) searchResults.push({
+    data.playlists.items.filter(Boolean).forEach(p => {
+      searchResults.push({
         type: 'playlist',
         name: p.name,
-        artist: p.owner?.display_name || '',
+        subtitle: p.owner?.display_name || '',
         artwork: p.images?.[0]?.url || '',
         uri: p.uri,
         id: p.id
       });
     });
   }
+}
+
+function formatFollowers(n) {
+  if (!n) return '0';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+  return n.toString();
 }
 
 // ============ Progress Timer ============
@@ -501,8 +713,11 @@ function render() {
     case 'login': renderLogin(app); break;
     case 'home': renderHome(app); break;
     case 'playlist': renderPlaylist(app); break;
+    case 'album': renderAlbum(app); break;
     case 'nowplaying': renderNowPlaying(app); break;
     case 'search': renderSearch(app); break;
+    case 'artist': renderArtist(app); break;
+    case 'discography': renderDiscography(app); break;
   }
 }
 
@@ -521,49 +736,100 @@ function renderLogin(app) {
   document.getElementById('login-btn').addEventListener('click', startAuth);
 }
 
-// ============ Home View (Library) ============
+// ============ Onboarding Overlay ============
+
+function showOnboarding() {
+  if (onboardingShown) return;
+  onboardingShown = true;
+  try { localStorage.setItem('spotify_onboarded', '1'); } catch (e) {}
+
+  const overlay = document.createElement('div');
+  overlay.className = 'onboarding-overlay';
+  overlay.innerHTML = `
+    <div class="onboard-content">
+      <div class="onboard-title">Controls</div>
+      <div class="onboard-row"><span class="onboard-icon">${swipeRightIcon()}</span><span>Swipe right — go back</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${swipeLeftIcon()}</span><span>Swipe left — search</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${scrollIcon()}</span><span>Scroll — browse / volume</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${tapIcon()}</span><span>Tap — select</span></div>
+      <div class="onboard-dismiss">Tap anywhere to start</div>
+    </div>
+  `;
+  overlay.addEventListener('click', () => overlay.remove());
+  document.getElementById('app').appendChild(overlay);
+  setTimeout(() => overlay.remove(), 6000);
+}
+
+// ============ Home View ============
 
 function renderHome(app) {
-  const header = createHeader('Library', true);
+  const header = createHeader('Home', true);
   app.appendChild(header);
 
-  const list = document.createElement('div');
-  list.className = 'list-container';
-  list.id = 'list-container';
+  const container = document.createElement('div');
+  container.className = 'home-container';
+  container.id = 'list-container';
 
-  if (playlists.length === 0) {
-    list.innerHTML = `<div class="empty-state">Loading playlists…</div>`;
+  if (homeSections.length === 0) {
+    container.innerHTML = `<div class="empty-state">Loading…</div>`;
   } else {
-    playlists.forEach((pl, i) => {
-      const item = document.createElement('div');
-      item.className = `list-item ${i === scrollIndex ? 'focused' : ''}`;
-      item.dataset.idx = i;
-      item.innerHTML = `
-        <img class="list-item-art" src="${pl.image || ''}" alt="">
-        <div class="list-item-info">
-          <div class="list-item-name">${truncate(pl.name, 22)}</div>
-          <div class="list-item-meta">${pl.trackCount} tracks</div>
-        </div>
-      `;
-      item.addEventListener('click', () => openPlaylist(pl, i));
-      list.appendChild(item);
+    let flatIdx = 0;
+    homeSections.forEach(section => {
+      const sectionEl = document.createElement('div');
+      sectionEl.className = 'home-section';
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'section-title';
+      titleEl.textContent = section.title;
+      sectionEl.appendChild(titleEl);
+
+      const row = document.createElement('div');
+      row.className = 'card-row';
+
+      section.items.forEach(item => {
+        const card = document.createElement('div');
+        card.className = `card ${flatIdx === scrollIndex ? 'focused' : ''}`;
+        card.dataset.idx = flatIdx;
+        card.innerHTML = `
+          <div class="card-art" style="background-image:url('${item.image}')"></div>
+          <div class="card-info">
+            <div class="card-name">${truncate(item.name, 16)}</div>
+            <div class="card-sub">${truncate(item.subtitle, 18)}</div>
+          </div>
+        `;
+        card.addEventListener('click', () => handleHomeItemClick(item));
+        row.appendChild(card);
+        flatIdx++;
+      });
+
+      sectionEl.appendChild(row);
+      container.appendChild(sectionEl);
     });
   }
 
-  app.appendChild(list);
+  app.appendChild(container);
 
-  // Now playing mini bar
-  if (currentTrack) {
-    app.appendChild(createMiniPlayer());
+  if (currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+function handleHomeItemClick(item) {
+  if (item.type === 'playlist') {
+    openPlaylistById(item.id, item.name, item.uri);
+  } else if (item.type === 'artist') {
+    openArtist(item.id);
+  } else if (item.type === 'album') {
+    openAlbum(item.id);
+  } else if (item.type === 'track') {
+    playTrackInContext(item.contextUri || item.uri, item.uri);
+    navigate('nowplaying');
   }
-
-  updateListScroll();
 }
 
 // ============ Playlist View ============
 
 function renderPlaylist(app) {
-  const header = createHeader(truncate(selectedPlaylist?.name || 'Playlist', 20), false);
+  const header = createHeader(truncate(selectedPlaylist?.name || 'Playlist', 18), false);
   app.appendChild(header);
 
   const list = document.createElement('div');
@@ -571,7 +837,7 @@ function renderPlaylist(app) {
   list.id = 'list-container';
 
   if (playlistTracks.length === 0) {
-    list.innerHTML = `<div class="empty-state">No tracks</div>`;
+    list.innerHTML = `<div class="empty-state">Loading tracks…</div>`;
   } else {
     playlistTracks.forEach((track, i) => {
       const isActive = currentTrack && currentTrack.uri === track.uri && isPlaying;
@@ -588,20 +854,197 @@ function renderPlaylist(app) {
       `;
       item.addEventListener('click', () => {
         playTrackInContext(selectedPlaylist.uri, track.uri);
-        currentView = 'nowplaying';
-        render();
+        navigate('nowplaying');
       });
       list.appendChild(item);
     });
   }
 
   app.appendChild(list);
+  if (currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
 
-  if (currentTrack) {
-    app.appendChild(createMiniPlayer());
+// ============ Album View ============
+
+function renderAlbum(app) {
+  const header = createHeader(truncate(selectedAlbum?.name || 'Album', 18), false);
+  app.appendChild(header);
+
+  const list = document.createElement('div');
+  list.className = 'list-container';
+  list.id = 'list-container';
+
+  if (albumTracks.length === 0) {
+    list.innerHTML = `<div class="empty-state">Loading…</div>`;
+  } else {
+    albumTracks.forEach((track, i) => {
+      const isActive = currentTrack && currentTrack.uri === track.uri && isPlaying;
+      const item = document.createElement('div');
+      item.className = `list-item ${i === scrollIndex ? 'focused' : ''} ${isActive ? 'active' : ''}`;
+      item.dataset.idx = i;
+      item.innerHTML = `
+        <div class="list-item-num">${isActive ? eqIcon() : (i + 1)}</div>
+        <div class="list-item-info">
+          <div class="list-item-name">${truncate(track.name, 22)}</div>
+          <div class="list-item-meta">${truncate(track.artist, 28)}</div>
+        </div>
+        <div class="list-item-dur">${formatTime(track.durationMs)}</div>
+      `;
+      item.addEventListener('click', () => {
+        playContext(selectedAlbum.uri, i);
+        navigate('nowplaying');
+      });
+      list.appendChild(item);
+    });
   }
 
-  updateListScroll();
+  app.appendChild(list);
+  if (currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Artist View ============
+
+function renderArtist(app) {
+  if (!artistData) { app.innerHTML = `<div class="empty-state">Loading…</div>`; return; }
+
+  const container = document.createElement('div');
+  container.className = 'artist-view';
+  container.id = 'list-container';
+
+  // Hero section with full-screen art
+  container.innerHTML = `
+    <div class="artist-hero" style="background-image:url('${artistData.image}')">
+      <div class="artist-hero-overlay">
+        <button class="artist-back" id="artist-back">${chevronLeft()}</button>
+        <div class="artist-hero-info">
+          <div class="artist-name">${artistData.name}</div>
+          <div class="artist-stats">${formatFollowers(artistData.followers)} followers · ${artistData.popularity}% popularity</div>
+        </div>
+        <div class="artist-actions">
+          <button class="artist-play-btn" id="artist-play">${playIcon()}</button>
+        </div>
+      </div>
+    </div>
+    <div class="artist-sections">
+      <div class="artist-expand" id="artist-expand">
+        <span>Explore</span>${chevronDown()}
+      </div>
+    </div>
+  `;
+
+  app.appendChild(container);
+
+  setTimeout(() => {
+    document.getElementById('artist-back')?.addEventListener('click', goBack);
+    document.getElementById('artist-play')?.addEventListener('click', () => {
+      if (artistData.topTracks.length) {
+        api('/me/player/play', {
+          method: 'PUT',
+          body: JSON.stringify({ uris: artistData.topTracks.map(t => t.uri) })
+        });
+        navigate('nowplaying');
+      }
+    });
+    document.getElementById('artist-expand')?.addEventListener('click', () => {
+      navigate('discography');
+    });
+  }, 0);
+
+  if (currentTrack) app.appendChild(createMiniPlayer());
+}
+
+// ============ Discography View ============
+
+function renderDiscography(app) {
+  if (!artistData) { goBack(); return; }
+
+  const header = createHeader(truncate(artistData.name, 16), false);
+  app.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'home-container';
+  container.id = 'list-container';
+
+  let flatIdx = 0;
+
+  // Popular tracks
+  if (artistData.topTracks.length) {
+    const sec = createCardSection('Popular', artistData.topTracks.map(t => ({
+      name: t.name, subtitle: formatTime(t.durationMs), image: t.artwork,
+      type: 'track', uri: t.uri, contextUri: t.contextUri
+    })), flatIdx);
+    container.appendChild(sec.el);
+    flatIdx = sec.nextIdx;
+  }
+
+  // Albums
+  if (artistData.albums.length) {
+    const sec = createCardSection('Albums', artistData.albums.map(a => ({
+      name: a.name, subtitle: a.year, image: a.image,
+      type: 'album', id: a.id, uri: a.uri
+    })), flatIdx);
+    container.appendChild(sec.el);
+    flatIdx = sec.nextIdx;
+  }
+
+  // Singles & EPs
+  if (artistData.singles.length) {
+    const sec = createCardSection('Singles & EPs', artistData.singles.map(a => ({
+      name: a.name, subtitle: a.year, image: a.image,
+      type: 'album', id: a.id, uri: a.uri
+    })), flatIdx);
+    container.appendChild(sec.el);
+    flatIdx = sec.nextIdx;
+  }
+
+  // Related artists
+  if (artistData.related.length) {
+    const sec = createCardSection('Fans Also Like', artistData.related.map(a => ({
+      name: a.name, subtitle: formatFollowers(a.followers), image: a.image,
+      type: 'artist', id: a.id, uri: a.uri
+    })), flatIdx);
+    container.appendChild(sec.el);
+    flatIdx = sec.nextIdx;
+  }
+
+  app.appendChild(container);
+  if (currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+function createCardSection(title, items, startIdx) {
+  const sectionEl = document.createElement('div');
+  sectionEl.className = 'home-section';
+
+  const titleEl = document.createElement('div');
+  titleEl.className = 'section-title';
+  titleEl.textContent = title;
+  sectionEl.appendChild(titleEl);
+
+  const row = document.createElement('div');
+  row.className = 'card-row';
+
+  let idx = startIdx;
+  items.forEach(item => {
+    const card = document.createElement('div');
+    card.className = `card ${idx === scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = idx;
+    card.innerHTML = `
+      <div class="card-art" style="background-image:url('${item.image}')"></div>
+      <div class="card-info">
+        <div class="card-name">${truncate(item.name, 14)}</div>
+        <div class="card-sub">${truncate(item.subtitle, 16)}</div>
+      </div>
+    `;
+    card.addEventListener('click', () => handleHomeItemClick(item));
+    row.appendChild(card);
+    idx++;
+  });
+
+  sectionEl.appendChild(row);
+  return { el: sectionEl, nextIdx: idx };
 }
 
 // ============ Now Playing View ============
@@ -613,7 +1056,7 @@ function renderNowPlaying(app) {
     <div class="view-nowplaying">
       <div class="np-header">
         <button class="np-back" id="np-back">${chevronDown()}</button>
-        <div class="np-context">Playing from playlist</div>
+        <div class="np-context">Now Playing</div>
       </div>
       <div class="np-artwork">
         ${track.artwork ? `<img src="${track.artwork}" alt="">` : `<div class="np-artwork-placeholder">${noteIcon()}</div>`}
@@ -652,7 +1095,7 @@ function updateNowPlaying() {
     if (artEl && currentTrack?.artwork) artEl.src = currentTrack.artwork;
     if (playBtn) playBtn.innerHTML = isPlaying ? pauseIcon() : playIcon();
     updateProgressBar();
-  } else if (currentView === 'home' || currentView === 'playlist') {
+  } else {
     const mini = document.querySelector('.mini-player');
     if (mini && currentTrack) {
       mini.querySelector('.mini-name').textContent = truncate(currentTrack.name, 18);
@@ -666,13 +1109,13 @@ function updateNowPlaying() {
 // ============ Search View ============
 
 function renderSearch(app) {
-  const header = createHeader('Search', true);
+  const header = createHeader('Search', false);
   app.appendChild(header);
 
   const searchBox = document.createElement('div');
   searchBox.className = 'search-box';
   searchBox.innerHTML = `
-    <input type="text" class="search-input" id="search-input" placeholder="Search songs, playlists…" autocomplete="off">
+    <input type="text" class="search-input" id="search-input" placeholder="Artists, albums, tracks…" autocomplete="off">
   `;
   app.appendChild(searchBox);
 
@@ -680,40 +1123,17 @@ function renderSearch(app) {
   list.className = 'list-container search-results';
   list.id = 'list-container';
 
-  searchResults.forEach((item, i) => {
-    const el = document.createElement('div');
-    el.className = `list-item ${i === scrollIndex ? 'focused' : ''}`;
-    el.dataset.idx = i;
-    el.innerHTML = `
-      <img class="list-item-art" src="${item.artwork || ''}" alt="">
-      <div class="list-item-info">
-        <div class="list-item-name">${truncate(item.name, 20)}</div>
-        <div class="list-item-meta">${item.type === 'playlist' ? 'Playlist' : truncate(item.artist, 24)}</div>
-      </div>
-    `;
-    el.addEventListener('click', () => {
-      if (item.type === 'playlist') {
-        openPlaylistById(item.id, item.name, item.uri);
-      } else {
-        playTrackInContext(item.contextUri, item.uri);
-        currentView = 'nowplaying';
-        render();
-      }
-    });
-    list.appendChild(el);
-  });
-
   if (searchResults.length === 0) {
     list.innerHTML = `<div class="empty-state">Type to search</div>`;
+  } else {
+    renderSearchResults(list);
   }
 
   app.appendChild(list);
-
-  if (currentTrack) {
-    app.appendChild(createMiniPlayer());
-  }
+  if (currentTrack) app.appendChild(createMiniPlayer());
 
   const input = document.getElementById('search-input');
+  input.focus();
   let searchTimeout;
   input.addEventListener('input', () => {
     clearTimeout(searchTimeout);
@@ -723,35 +1143,46 @@ function renderSearch(app) {
       const listEl = document.getElementById('list-container');
       if (listEl) {
         listEl.innerHTML = '';
-        searchResults.forEach((item, i) => {
-          const el = document.createElement('div');
-          el.className = `list-item ${i === scrollIndex ? 'focused' : ''}`;
-          el.innerHTML = `
-            <img class="list-item-art" src="${item.artwork || ''}" alt="">
-            <div class="list-item-info">
-              <div class="list-item-name">${truncate(item.name, 20)}</div>
-              <div class="list-item-meta">${item.type === 'playlist' ? 'Playlist' : truncate(item.artist, 24)}</div>
-            </div>
-          `;
-          el.addEventListener('click', () => {
-            if (item.type === 'playlist') {
-              openPlaylistById(item.id, item.name, item.uri);
-            } else {
-              playTrackInContext(item.contextUri, item.uri);
-              currentView = 'nowplaying';
-              render();
-            }
-          });
-          listEl.appendChild(el);
-        });
-        if (searchResults.length === 0 && input.value) {
+        if (searchResults.length) {
+          renderSearchResults(listEl);
+        } else if (input.value) {
           listEl.innerHTML = `<div class="empty-state">No results</div>`;
         }
       }
-    }, 400);
+    }, 350);
   });
 
-  updateListScroll();
+  scrollFocusedIntoView();
+}
+
+function renderSearchResults(container) {
+  searchResults.forEach((item, i) => {
+    const el = document.createElement('div');
+    el.className = `list-item ${i === scrollIndex ? 'focused' : ''}`;
+    el.dataset.idx = i;
+    el.innerHTML = `
+      <img class="list-item-art ${item.type === 'artist' ? 'round' : ''}" src="${item.artwork || ''}" alt="">
+      <div class="list-item-info">
+        <div class="list-item-name">${truncate(item.name, 20)}</div>
+        <div class="list-item-meta">${capitalize(item.type)} · ${truncate(item.subtitle, 20)}</div>
+      </div>
+    `;
+    el.addEventListener('click', () => handleSearchItemClick(item));
+    container.appendChild(el);
+  });
+}
+
+function handleSearchItemClick(item) {
+  if (item.type === 'artist') {
+    openArtist(item.id);
+  } else if (item.type === 'album') {
+    openAlbum(item.id);
+  } else if (item.type === 'playlist') {
+    openPlaylistById(item.id, item.name, item.uri);
+  } else if (item.type === 'track') {
+    playTrackInContext(item.contextUri || item.uri, item.uri);
+    navigate('nowplaying');
+  }
 }
 
 // ============ Shared Components ============
@@ -840,19 +1271,34 @@ async function openPlaylistById(id, name, uri) {
   if (currentView === 'playlist') render();
 }
 
+async function openArtist(artistId) {
+  artistData = null;
+  navigate('artist');
+  await fetchArtist(artistId);
+  if (currentView === 'artist') render();
+}
+
+async function openAlbum(albumId) {
+  albumTracks = [];
+  selectedAlbum = null;
+  navigate('album');
+  await fetchAlbumTracks(albumId);
+  if (currentView === 'album') render();
+}
+
 // ============ List Scroll Management ============
 
-function updateListScroll() {
+function scrollFocusedIntoView() {
   const container = document.getElementById('list-container');
   if (!container) return;
 
-  const items = container.querySelectorAll('.list-item');
+  const items = container.querySelectorAll('.list-item, .card');
   items.forEach((item, i) => {
-    item.classList.toggle('focused', i === scrollIndex);
+    const idx = parseInt(item.dataset.idx);
+    item.classList.toggle('focused', idx === scrollIndex);
   });
 
-  // Scroll focused into view
-  const focused = container.querySelector('.list-item.focused');
+  const focused = container.querySelector('.focused');
   if (focused) {
     const containerRect = container.getBoundingClientRect();
     const itemRect = focused.getBoundingClientRect();
@@ -865,8 +1311,13 @@ function updateListScroll() {
 }
 
 function getListLength() {
-  if (currentView === 'home') return playlists.length;
+  if (currentView === 'home' || currentView === 'discography') {
+    const container = document.getElementById('list-container');
+    if (container) return container.querySelectorAll('.card').length;
+    return 0;
+  }
   if (currentView === 'playlist') return playlistTracks.length;
+  if (currentView === 'album') return albumTracks.length;
   if (currentView === 'search') return searchResults.length;
   return 0;
 }
@@ -909,6 +1360,11 @@ function showToast(msg, type = 'info') {
 function truncate(str, max) {
   if (!str) return '';
   return str.length > max ? str.substring(0, max) + '…' : str;
+}
+
+function capitalize(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 // ============ Icons ============
@@ -957,6 +1413,22 @@ function eqIcon() {
   return `<span class="eq-bars"><span></span><span></span><span></span></span>`;
 }
 
+function swipeRightIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M4 12h12l-4-4 1.4-1.4L19.8 12l-6.4 6.4L12 17l4-4H4z"/></svg>`;
+}
+
+function swipeLeftIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M20 12H8l4 4-1.4 1.4L4.2 12l6.4-6.4L12 7l-4 4h12z"/></svg>`;
+}
+
+function scrollIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2l-4 4h3v4h2V6h3L12 2zm0 20l4-4h-3v-4h-2v4H8l4 4z"/></svg>`;
+}
+
+function tapIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2a4 4 0 00-4 4c0 1.1.45 2.1 1.17 2.83L12 6l2.83 2.83A4 4 0 0012 2zm-1 10v9l-3-1.5v-2L11 16v-4h2v4l3 1.5v2L13 21v-9h-2z"/></svg>`;
+}
+
 // ============ R1 Hardware Events ============
 
 window.addEventListener('scrollUp', () => handleScroll(-1));
@@ -965,10 +1437,13 @@ window.addEventListener('scrollDown', () => handleScroll(1));
 function handleScroll(dir) {
   if (currentView === 'nowplaying') {
     adjustVolume(dir * -0.05);
-  } else if (currentView === 'home' || currentView === 'playlist' || currentView === 'search') {
+  } else if (currentView === 'artist') {
+    // no scroll on artist hero, just trigger explore
+  } else {
     const maxIdx = getListLength() - 1;
+    if (maxIdx < 0) return;
     scrollIndex = Math.max(0, Math.min(maxIdx, scrollIndex + dir));
-    updateListScroll();
+    scrollFocusedIntoView();
   }
 }
 
@@ -977,21 +1452,20 @@ window.addEventListener('sideClick', () => {
     startAuth();
   } else if (currentView === 'nowplaying') {
     togglePlayback();
-  } else if (currentView === 'home' && playlists[scrollIndex]) {
-    openPlaylist(playlists[scrollIndex], scrollIndex);
+  } else if (currentView === 'artist') {
+    navigate('discography');
+  } else if (currentView === 'home' || currentView === 'discography') {
+    // Click focused card
+    const focused = document.querySelector('.card.focused');
+    if (focused) focused.click();
   } else if (currentView === 'playlist' && playlistTracks[scrollIndex]) {
     playTrackInContext(selectedPlaylist.uri, playlistTracks[scrollIndex].uri);
-    currentView = 'nowplaying';
-    render();
+    navigate('nowplaying');
+  } else if (currentView === 'album' && albumTracks[scrollIndex]) {
+    playContext(selectedAlbum.uri, scrollIndex);
+    navigate('nowplaying');
   } else if (currentView === 'search' && searchResults[scrollIndex]) {
-    const item = searchResults[scrollIndex];
-    if (item.type === 'playlist') {
-      openPlaylistById(item.id, item.name, item.uri);
-    } else {
-      playTrackInContext(item.contextUri, item.uri);
-      currentView = 'nowplaying';
-      render();
-    }
+    handleSearchItemClick(searchResults[scrollIndex]);
   }
 });
 
@@ -1056,6 +1530,9 @@ document.addEventListener('touchend', (e) => {
 document.addEventListener('DOMContentLoaded', async () => {
   volume = await loadVolume();
 
+  // Check onboarding state
+  try { onboardingShown = !!localStorage.getItem('spotify_onboarded'); } catch (e) {}
+
   // Check for OAuth callback
   const callbackHandled = await handleCallback();
 
@@ -1074,12 +1551,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Authenticated
+  // Authenticated — show home
   currentView = 'home';
   render();
   initPlayer();
+
+  // Fetch data in parallel
   await fetchPlaylists();
+  await fetchHomeSections();
   render();
+
+  // Show onboarding on first launch
+  if (!onboardingShown) {
+    setTimeout(showOnboarding, 500);
+  }
 
   // Dev keyboard fallback
   if (typeof PluginMessageHandler === 'undefined') {
