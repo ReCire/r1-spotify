@@ -91,13 +91,12 @@ html, body {
   position: relative;
 }
 
-/* Cross-tab now-playing bar (shared between live & mixtape views) */
+/* Cross-tab now-playing bar (flex child at top of station list) */
 .cross-tab-np {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 8px;
-  height: 36px;
+  flex-shrink: 0;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -107,15 +106,22 @@ html, body {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   border: 1px solid #FE5F00;
-  z-index: 10;
   cursor: pointer;
-  transition: opacity 0.25s ease;
+  transition: max-height 0.35s cubic-bezier(0.25, 0.1, 0.25, 1),
+              opacity 0.25s ease,
+              padding 0.35s ease;
+}
+.cross-tab-np.visible {
+  max-height: 36px;
+  opacity: 1;
+  padding: 6px 8px;
 }
 .cross-tab-np .np-art {
   width: 24px;
   height: 24px;
   border-radius: 4px;
   object-fit: cover;
+  flex-shrink: 0;
 }
 .cross-tab-np .np-name {
   font-size: 9px;
@@ -130,6 +136,7 @@ html, body {
   color: #FE5F00;
   font-weight: 700;
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 
 .station-card {

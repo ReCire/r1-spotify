@@ -203,13 +203,11 @@ function renderLive(app) {
     list.appendChild(card);
   });
 
-  // Cross-tab now-playing bar (shown when a mixtape is playing)
+  // Cross-tab now-playing bar at TOP (flex child, stations resize around it)
   const npBar = document.createElement('div');
   npBar.className = 'cross-tab-np';
   npBar.id = 'live-np';
-  npBar.style.opacity = '0';
-  npBar.style.pointerEvents = 'none';
-  list.appendChild(npBar);
+  list.prepend(npBar);
 
   app.appendChild(list);
 }
@@ -279,40 +277,36 @@ function updateMixtapeView() {
   if (!container) return;
 
   const cards = container.querySelectorAll('.mixtape-card');
-  const availH = 250; // usable height inside container
+  const availH = 250;
   const focusedH = 148;
   const normalH = 46;
   const gap = 4;
   const idx = mixtapeScrollIndex;
 
-  // Center the focused card vertically
-  const centerY = (availH - focusedH) / 2;
+  // Build virtual stack positions
+  let stackY = 0;
+  const positions = [];
+  for (let i = 0; i < MIXTAPES.length; i++) {
+    const h = i === idx ? focusedH : normalH;
+    positions.push({ y: stackY, h });
+    stackY += h + gap;
+  }
+  const totalH = stackY - gap;
+
+  // Scroll offset: try to center focused card, clamped to edges
+  const focusedPos = positions[idx];
+  let scrollOffset = focusedPos.y + focusedPos.h / 2 - availH / 2;
+  scrollOffset = Math.max(0, Math.min(scrollOffset, Math.max(0, totalH - availH)));
 
   cards.forEach((card, i) => {
-    const dist = i - idx;
-    const absDist = Math.abs(dist);
-    const isFocused = dist === 0;
-    const h = isFocused ? focusedH : normalH;
+    const pos = positions[i];
+    const y = pos.y - scrollOffset;
+    const absDist = Math.abs(i - idx);
+    const isFocused = i === idx;
     const isPlayingThis = currentStation === MIXTAPES[i].id && isPlaying;
 
-    // Calculate Y position relative to focused card
-    let y;
-    if (isFocused) {
-      y = centerY;
-    } else if (dist < 0) {
-      y = centerY;
-      for (let j = 0; j < absDist; j++) {
-        y -= normalH + gap;
-      }
-    } else {
-      y = centerY + focusedH + gap;
-      for (let j = 1; j < dist; j++) {
-        y += normalH + gap;
-      }
-    }
-
     card.style.transform = `translateY(${y}px)`;
-    card.style.height = `${h}px`;
+    card.style.height = `${pos.h}px`;
     card.style.opacity = absDist <= 1 ? (isFocused ? 1 : 0.5) : 0;
     card.style.pointerEvents = absDist <= 1 ? 'auto' : 'none';
     card.style.zIndex = isFocused ? 2 : 1;
@@ -320,14 +314,12 @@ function updateMixtapeView() {
     card.classList.toggle('focused', isFocused);
     card.classList.toggle('playing', isPlayingThis);
 
-    // Play button: show only on focused
     const playBtn = card.querySelector('.card-play-btn');
     if (playBtn) {
       playBtn.innerHTML = isPlayingThis ? pauseIcon() : playIcon();
       playBtn.style.opacity = isFocused ? '1' : '0';
       playBtn.style.pointerEvents = isFocused ? 'auto' : 'none';
     }
-    // Description: show only on focused
     const desc = card.querySelector('.mixtape-desc');
     if (desc) desc.style.opacity = isFocused ? '1' : '0';
   });
@@ -438,12 +430,10 @@ function updateLiveView() {
         <span class="np-name">${playingMx.name}</span>
         <span class="np-indicator">MIXTAPE</span>
       `;
-      liveNp.style.opacity = '1';
-      liveNp.style.pointerEvents = 'auto';
+      liveNp.classList.add('visible');
       liveNp.onclick = () => { currentTab = 'mixtapes'; render(); };
     } else {
-      liveNp.style.opacity = '0';
-      liveNp.style.pointerEvents = 'none';
+      liveNp.classList.remove('visible');
     }
   }
 }
