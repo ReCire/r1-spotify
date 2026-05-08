@@ -644,7 +644,7 @@ let touchLastTime = 0;
 let touchVelocity = 0;
 let touchAccumulated = 0;
 let momentumRAF = null;
-const TOUCH_STEP_PX = 40;
+const TOUCH_STEP_PX = 80;
 
 function cancelMomentum() {
   if (momentumRAF) {
@@ -720,9 +720,9 @@ document.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 function startMomentum(vel) {
-  if (Math.abs(vel) < 0.08) return;
+  if (Math.abs(vel) < 0.12) return; // velocity threshold
 
-  const totalItems = Math.min(Math.round(Math.abs(vel) * 20), MIXTAPES.length);
+  const totalItems = Math.min(Math.round(Math.abs(vel) * 8), MIXTAPES.length);
   if (totalItems < 1) return;
 
   const direction = vel > 0 ? 1 : -1;
