@@ -2,7 +2,7 @@
 // ============ Configuration ============
 
 const CONFIG = {
-  clientId: '', // Set your Spotify Client ID here
+  clientId: '8ef09899795a4fdab465bfa82c97c534', // Set your Spotify Client ID here
   redirectUri: `${window.location.origin}/callback.html`,
   scopes: [
     'streaming',
