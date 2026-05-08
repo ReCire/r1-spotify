@@ -1,67 +1,75 @@
-# NTS Radio for Rabbit R1
+# Spotify for Rabbit R1
 
-A native streaming app for the Rabbit R1 that brings NTS Radio's live channels and infinite mixtapes to your device.
-
-![NTS Radio R1 - Live View](metadata/screenshot.jpg)
+A native Spotify player for the Rabbit R1, featuring playlist browsing, search, and full playback control via the Spotify Web Playback SDK.
 
 ## Features
 
-- **Live Streaming** — Listen to NTS 1 and NTS 2 live channels
-- **Infinite Mixtapes** — 16 curated music-only themed streams (ambient, house, jazz, hip-hop, and more)
-- **Beautiful UI** — Full-card artwork with dual gradient overlays, optimized for the 240×282px R1 screen
-- **Smart Controls**
-  - Scroll wheel: Volume when music is playing, browse mixtapes when not
-  - Side button: Play/pause
-  - Tap cards to start/stop playback
-- **Visual Feedback** — Animated audio visualizer on playing cards, floating volume toast
+- **Spotify Authentication** — OAuth 2.0 PKCE flow, no server required
+- **Library Browsing** — View and play your playlists
+- **Search** — Find tracks and playlists directly on R1
+- **Now Playing** — Album art, progress bar, play/pause/skip controls
+- **Progressive Disclosure** — Vertical scroll through lists, drill into playlists, now playing expands
+- **R1 Hardware Integration**
+  - Scroll wheel: Volume on Now Playing, navigate lists elsewhere
+  - Side button: Select item / play-pause
+  - Touch: Tap items, swipe right to go back, swipe left for search
+- **Mini Player** — Persistent playback bar across all views
+- **Spotify Branding** — Native look with Spotify green, dark palette, optimized for 240×282px
 
-## Installation on R1
+## Setup
 
-### Via QR Code (Recommended)
+### 1. Create a Spotify App
 
-![QR COode tro install (Rabbit OS might warn you about untrusted source)](metadata/qr.jpg)
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Create a new app
+3. Add your deployed URL + `/callback.html` as a Redirect URI (e.g. `https://your-app.vercel.app/callback.html`)
+4. Select **Web API** and **Web Playback SDK**
+5. Copy your **Client ID**
 
-1. Open the QR code page: https://nts-live-radio-plugin.vercel.app/qr.html
-2. Point your R1's camera at the QR code
-3. The R1 will register the creation and add it to your creations list
+### 2. Configure
 
-### Manual Installation
+Edit `apps/src/main.js` and set your Client ID:
 
-1. Deploy the app to a public URL (see Deployment below)
-2. In the Rabbithole, add the URL as a custom creation
+```js
+const CONFIG = {
+  clientId: 'YOUR_CLIENT_ID_HERE',
+  ...
+};
+```
 
-## Development
+### 3. Development
 
 ```bash
-cd apps/app
+cd apps
 npm install
 npm run dev
 ```
 
 Open http://localhost:5173 to test in your browser.
 
+For local dev, add `http://localhost:5173/callback.html` as a Redirect URI in your Spotify app settings.
+
 ### Keyboard Controls (Dev Mode)
 
-- `Space` — Side button (play/pause)
-- `Arrow Up/Down` — Scroll wheel (volume/mixtape browse)
-- `Arrow Left` — Switch to LIVE tab
-- `Arrow Right` — Switch to MIXTAPES tab
+- `Space` — Side button (select/play-pause)
+- `Arrow Up/Down` — Scroll through lists / adjust volume
+- `Escape` — Go back
 
 ## Building
 
 ```bash
+cd apps
 npm run build
 ```
 
-The built files will be in `dist/`.
+Output in `dist/`.
 
 ## Deployment
-
-The app is deployed on Vercel: https://nts-live-radio-plugin.vercel.app
 
 ### Deploy to Vercel
 
 ```bash
+cd apps
 npx vercel login
 npx vercel deploy --prod
 ```
@@ -69,32 +77,36 @@ npx vercel deploy --prod
 ### Deploy to Netlify
 
 ```bash
+cd apps
 npm run build
 npx netlify-cli deploy --prod --dir=dist
 ```
 
-### QR Code Generation
+After deploying, update your Spotify app's Redirect URI to match (e.g. `https://your-app.vercel.app/callback.html`).
 
-The `qr.html` file generates an install QR code. Update the `url` in the script section to match your deployed URL, then open it in a browser to generate a scannable code.
+### QR Code Installation
 
-## API Endpoints
+Update `qr.html` with your deployed URL, then scan with your R1's camera to install as a creation.
 
-- **Live shows**: `https://www.nts.live/api/v2/live`
-- **Stream 1**: `https://stream-relay-geo.ntslive.net/stream`
-- **Stream 2**: `https://stream-relay-geo.ntslive.net/stream2`
-- **Mixtapes**: `https://stream-mixtape-geo.ntslive.net/mixtape*`
+## Architecture
 
-## Known Limitations
+- **Auth**: OAuth 2.0 PKCE (client-side, no backend needed)
+- **Playback**: Spotify Web Playback SDK (requires Premium)
+- **API**: Spotify Web API for library, search, playback control
+- **Storage**: R1 `creationStorage` API with localStorage fallback
 
-- NTS supporter login and archive access require Mixcloud/Soundcloud (no direct streaming API)
-- Mixtape artwork URLs are from the NTS website; some may be reused across mixtapes
+## Requirements
+
+- Spotify Premium account (required for Web Playback SDK)
+- Rabbit R1 with Creations SDK support
 
 ## Tech Stack
 
 - Vanilla JavaScript (ES modules)
 - Vite for build tooling
-- HTML5 Audio for playback
-- CSS Grid/Flexbox for layout
+- Spotify Web Playback SDK for audio
+- Spotify Web API for data
+- CSS Flexbox for layout
 - R1 Creations SDK for hardware events
 
 ## License
