@@ -131,6 +131,7 @@ function render() {
   // Content
   if (currentTab === 'live') {
     renderLive(app);
+    updateLiveView();
   } else {
     renderMixtapes(app);
   }
@@ -201,6 +202,14 @@ function renderLive(app) {
     card.addEventListener('click', () => togglePlay(station.id));
     list.appendChild(card);
   });
+
+  // Cross-tab now-playing bar (shown when a mixtape is playing)
+  const npBar = document.createElement('div');
+  npBar.className = 'cross-tab-np';
+  npBar.id = 'live-np';
+  npBar.style.opacity = '0';
+  npBar.style.pointerEvents = 'none';
+  list.appendChild(npBar);
 
   app.appendChild(list);
 }
@@ -334,7 +343,22 @@ function updateMixtapeView() {
     const playingMx = playingMxIdx >= 0 && isPlaying ? MIXTAPES[playingMxIdx] : null;
     const playingVisible = playingMx && Math.abs(playingMxIdx - idx) <= 1;
 
-    if (playingMx && !playingVisible) {
+    // Cross-tab: live station playing while on mixtapes tab
+    const playingStation = isPlaying && typeof currentStation === 'number'
+      ? stations.find(s => s.id === currentStation)
+      : null;
+
+    if (playingStation) {
+      npBar.className = 'mixtape-now-playing at-top';
+      npBar.innerHTML = `
+        <img class="np-art" src="${playingStation.artwork || playingStation.artworkLarge || ''}" alt="">
+        <span class="np-name">${playingStation.name} — ${playingStation.title}</span>
+        <span class="np-indicator">LIVE</span>
+      `;
+      npBar.style.opacity = '1';
+      npBar.style.pointerEvents = 'auto';
+      npBar.onclick = () => { currentTab = 'live'; render(); };
+    } else if (playingMx && !playingVisible) {
       const atTop = playingMxIdx < idx;
       npBar.className = `mixtape-now-playing ${atTop ? 'at-top' : 'at-bottom'}`;
       npBar.innerHTML = `
@@ -401,6 +425,27 @@ function updateLiveView() {
   });
 
   if (isPlaying) startVisualizer(); else stopVisualizer();
+
+  // Cross-tab: show if a mixtape is playing
+  const liveNp = document.getElementById('live-np');
+  if (liveNp) {
+    const playingMx = isPlaying && typeof currentStation === 'string'
+      ? MIXTAPES.find(mx => mx.id === currentStation)
+      : null;
+    if (playingMx) {
+      liveNp.innerHTML = `
+        <img class="np-art" src="${playingMx.artwork}" alt="">
+        <span class="np-name">${playingMx.name}</span>
+        <span class="np-indicator">MIXTAPE</span>
+      `;
+      liveNp.style.opacity = '1';
+      liveNp.style.pointerEvents = 'auto';
+      liveNp.onclick = () => { currentTab = 'mixtapes'; render(); };
+    } else {
+      liveNp.style.opacity = '0';
+      liveNp.style.pointerEvents = 'none';
+    }
+  }
 }
 
 // ============ Volume UI (floating toast) ============

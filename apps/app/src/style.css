@@ -88,6 +88,48 @@ html, body {
   gap: 4px;
   padding: 2px 6px 6px;
   overflow: hidden;
+  position: relative;
+}
+
+/* Cross-tab now-playing bar (shared between live & mixtape views) */
+.cross-tab-np {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 8px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: rgba(14, 14, 16, 0.92);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid #FE5F00;
+  z-index: 10;
+  cursor: pointer;
+  transition: opacity 0.25s ease;
+}
+.cross-tab-np .np-art {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.cross-tab-np .np-name {
+  font-size: 9px;
+  font-weight: 700;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cross-tab-np .np-indicator {
+  font-size: 7px;
+  color: #FE5F00;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
 .station-card {
