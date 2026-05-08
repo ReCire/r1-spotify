@@ -210,39 +210,31 @@ function renderLive(app) {
 function renderMixtapes(app) {
   const container = document.createElement('div');
   container.className = 'mixtape-container';
+  container.id = 'mixtape-container';
 
-  // Show 3 visible at a time, centered on current
-  const visibleCount = 3;
-  const startIdx = Math.max(0, mixtapeScrollIndex - 1);
-
-  for (let i = startIdx; i < Math.min(MIXTAPES.length, startIdx + visibleCount); i++) {
-    const mx = MIXTAPES[i];
-    const isCurrent = i === mixtapeScrollIndex;
-    const isPlayingThis = currentStation === mx.id && isPlaying;
-
+  // Build ALL cards once — positions managed by updateMixtapeView
+  MIXTAPES.forEach((mx, i) => {
     const card = document.createElement('div');
-    card.className = `mixtape-card ${isCurrent ? 'focused' : ''} ${isPlayingThis ? 'playing' : ''}`;
+    card.className = 'mixtape-card';
+    card.dataset.idx = i;
     card.style.backgroundImage = `url(${mx.artwork})`;
 
     const overlay = document.createElement('div');
     overlay.className = 'mixtape-overlay';
 
-    if (isCurrent) {
-      const playBtn = document.createElement('button');
-      playBtn.className = 'card-play-btn';
-      playBtn.innerHTML = isPlayingThis ? pauseIcon() : playIcon();
-      playBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleMixtapePlay(mx.id);
-      });
-      overlay.appendChild(playBtn);
-    }
+    const playBtn = document.createElement('button');
+    playBtn.className = 'card-play-btn';
+    playBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMixtapePlay(mx.id);
+    });
+    overlay.appendChild(playBtn);
 
     const info = document.createElement('div');
     info.className = 'mixtape-info';
     info.innerHTML = `
       <div class="mixtape-name">${mx.name}</div>
-      ${isCurrent ? `<div class="mixtape-desc">${mx.desc}</div>` : ''}
+      <div class="mixtape-desc">${mx.desc}</div>
     `;
     overlay.appendChild(info);
 
@@ -252,15 +244,163 @@ function renderMixtapes(app) {
       toggleMixtapePlay(mx.id);
     });
     container.appendChild(card);
-  }
+  });
 
   // Scroll indicator
   const indicator = document.createElement('div');
   indicator.className = 'scroll-indicator';
-  indicator.textContent = `${mixtapeScrollIndex + 1} / ${MIXTAPES.length}`;
+  indicator.id = 'scroll-indicator';
   container.appendChild(indicator);
 
+  // Sticky now-playing bar
+  const nowPlaying = document.createElement('div');
+  nowPlaying.className = 'mixtape-now-playing';
+  nowPlaying.id = 'mixtape-np';
+  nowPlaying.style.opacity = '0';
+  nowPlaying.style.pointerEvents = 'none';
+  container.appendChild(nowPlaying);
+
   app.appendChild(container);
+  updateMixtapeView();
+}
+
+// Update mixtape card positions/state via CSS — no DOM rebuild
+function updateMixtapeView() {
+  const container = document.getElementById('mixtape-container');
+  if (!container) return;
+
+  const cards = container.querySelectorAll('.mixtape-card');
+  const availH = 250; // usable height inside container
+  const focusedH = 148;
+  const normalH = 46;
+  const gap = 4;
+  const idx = mixtapeScrollIndex;
+
+  // Center the focused card vertically
+  const centerY = (availH - focusedH) / 2;
+
+  cards.forEach((card, i) => {
+    const dist = i - idx;
+    const absDist = Math.abs(dist);
+    const isFocused = dist === 0;
+    const h = isFocused ? focusedH : normalH;
+    const isPlayingThis = currentStation === MIXTAPES[i].id && isPlaying;
+
+    // Calculate Y position relative to focused card
+    let y;
+    if (isFocused) {
+      y = centerY;
+    } else if (dist < 0) {
+      y = centerY;
+      for (let j = 0; j < absDist; j++) {
+        y -= normalH + gap;
+      }
+    } else {
+      y = centerY + focusedH + gap;
+      for (let j = 1; j < dist; j++) {
+        y += normalH + gap;
+      }
+    }
+
+    card.style.transform = `translateY(${y}px)`;
+    card.style.height = `${h}px`;
+    card.style.opacity = absDist <= 1 ? (isFocused ? 1 : 0.5) : 0;
+    card.style.pointerEvents = absDist <= 1 ? 'auto' : 'none';
+    card.style.zIndex = isFocused ? 2 : 1;
+
+    card.classList.toggle('focused', isFocused);
+    card.classList.toggle('playing', isPlayingThis);
+
+    // Play button: show only on focused
+    const playBtn = card.querySelector('.card-play-btn');
+    if (playBtn) {
+      playBtn.innerHTML = isPlayingThis ? pauseIcon() : playIcon();
+      playBtn.style.opacity = isFocused ? '1' : '0';
+      playBtn.style.pointerEvents = isFocused ? 'auto' : 'none';
+    }
+    // Description: show only on focused
+    const desc = card.querySelector('.mixtape-desc');
+    if (desc) desc.style.opacity = isFocused ? '1' : '0';
+  });
+
+  // Scroll indicator
+  const indicator = document.getElementById('scroll-indicator');
+  if (indicator) indicator.textContent = `${idx + 1} / ${MIXTAPES.length}`;
+
+  // Sticky now-playing bar
+  const npBar = document.getElementById('mixtape-np');
+  if (npBar) {
+    const playingMxIdx = MIXTAPES.findIndex(mx => mx.id === currentStation);
+    const playingMx = playingMxIdx >= 0 && isPlaying ? MIXTAPES[playingMxIdx] : null;
+    const playingVisible = playingMx && Math.abs(playingMxIdx - idx) <= 1;
+
+    if (playingMx && !playingVisible) {
+      const atTop = playingMxIdx < idx;
+      npBar.className = `mixtape-now-playing ${atTop ? 'at-top' : 'at-bottom'}`;
+      npBar.innerHTML = `
+        <img class="np-art" src="${playingMx.artwork}" alt="">
+        <span class="np-name">${playingMx.name}</span>
+        <span class="np-indicator">NOW PLAYING</span>
+      `;
+      npBar.style.opacity = '1';
+      npBar.style.pointerEvents = 'auto';
+      npBar.onclick = () => {
+        mixtapeScrollIndex = playingMxIdx;
+        updateMixtapeView();
+      };
+    } else {
+      npBar.style.opacity = '0';
+      npBar.style.pointerEvents = 'none';
+    }
+  }
+}
+
+// Update live view without full DOM rebuild
+function updateLiveView() {
+  const cards = document.querySelectorAll('.station-card');
+  if (cards.length === 0) { render(); return; }
+
+  cards.forEach((card, i) => {
+    const station = stations[i];
+    if (!station) return;
+    const isActive = isPlaying && currentStation === station.id;
+
+    card.classList.toggle('expanded', isActive);
+
+    // Update play button
+    const playBtn = card.querySelector('.card-play-btn');
+    if (playBtn) {
+      playBtn.innerHTML = isActive ? pauseIcon() : playIcon();
+    }
+
+    // Description: only on active card
+    let bottomInfo = card.querySelector('.card-bottom');
+    if (isActive && station.description) {
+      if (!bottomInfo) {
+        bottomInfo = document.createElement('div');
+        bottomInfo.className = 'card-bottom expanded';
+        bottomInfo.innerHTML = `<div class="card-desc">${truncate(station.description, 120)}</div>`;
+        card.querySelector('.card-overlay').appendChild(bottomInfo);
+      }
+    } else if (bottomInfo) {
+      bottomInfo.remove();
+    }
+
+    // Visualizer: only on active card
+    let vizEl = card.querySelector('.card-visualizer');
+    if (isActive) {
+      if (!vizEl) {
+        vizEl = document.createElement('div');
+        vizEl.className = 'card-visualizer';
+        vizEl.innerHTML = createVisualizerBars();
+        card.querySelector('.card-overlay').appendChild(vizEl);
+      }
+    } else if (vizEl) {
+      vizEl.remove();
+    }
+  });
+
+  if (isPlaying) startVisualizer(); else stopVisualizer();
 }
 
 // ============ Volume UI (floating toast) ============
@@ -320,7 +460,7 @@ function getStreamUrl(stationId) {
 function togglePlay(stationId) {
   if (currentStation === stationId && isPlaying) {
     stopPlayback();
-    render();
+    updateCurrentView();
   } else {
     startPlayback(stationId);
   }
@@ -329,10 +469,15 @@ function togglePlay(stationId) {
 function toggleMixtapePlay(mixtapeId) {
   if (currentStation === mixtapeId && isPlaying) {
     stopPlayback();
-    render();
+    updateCurrentView();
   } else {
     startPlayback(mixtapeId);
   }
+}
+
+function updateCurrentView() {
+  if (currentTab === 'live') updateLiveView();
+  else updateMixtapeView();
 }
 
 function startPlayback(stationId) {
@@ -363,7 +508,7 @@ function startPlayback(stationId) {
     isPlaying = false;
     currentStation = null;
     stopVisualizer();
-    render();
+    updateCurrentView();
   });
 
   audio.addEventListener('stalled', () => {
@@ -373,7 +518,7 @@ function startPlayback(stationId) {
   audio.play().then(() => {
     isPlaying = true;
     currentStation = stationId;
-    render();
+    updateCurrentView();
     startVisualizer();
   }).catch((err) => {
     let errorMsg = 'Could not start playback.';
@@ -384,7 +529,7 @@ function startPlayback(stationId) {
     isPlaying = false;
     currentStation = null;
     stopVisualizer();
-    render();
+    updateCurrentView();
   });
 }
 
@@ -421,45 +566,28 @@ function adjustVolume(delta) {
   showVolumeToast();
 }
 
+// R1 hardware scroll: volume when playing, browse when not
 function handleScrollUp() {
-  if (isPlaying) {
+  if (isPlaying && currentTab === 'live') {
     adjustVolume(0.05);
   } else if (currentTab === 'mixtapes') {
     mixtapeScrollIndex = Math.max(0, mixtapeScrollIndex - 1);
-    render();
+    updateMixtapeView();
   }
 }
 
 function handleScrollDown() {
-  if (isPlaying) {
+  if (isPlaying && currentTab === 'live') {
     adjustVolume(-0.05);
   } else if (currentTab === 'mixtapes') {
     mixtapeScrollIndex = Math.min(MIXTAPES.length - 1, mixtapeScrollIndex + 1);
-    render();
+    updateMixtapeView();
   }
 }
 
-// Scroll index directly without render (for batched touch updates)
-function scrollIndexBy(delta) {
-  if (isPlaying) {
-    adjustVolume(delta > 0 ? -0.05 * delta : 0.05 * Math.abs(delta));
-    return;
-  }
-  if (currentTab === 'mixtapes') {
-    mixtapeScrollIndex = Math.max(0, Math.min(MIXTAPES.length - 1, mixtapeScrollIndex + delta));
-  }
-}
-
-// Throttled render: only one render per animation frame
-let renderScheduled = false;
-function scheduleRender() {
-  if (!renderScheduled) {
-    renderScheduled = true;
-    requestAnimationFrame(() => {
-      renderScheduled = false;
-      render();
-    });
-  }
+// Move mixtape index without render (for batched touch updates)
+function scrollMixtapeBy(delta) {
+  mixtapeScrollIndex = Math.max(0, Math.min(MIXTAPES.length - 1, mixtapeScrollIndex + delta));
 }
 
 // ============ Icons ============
@@ -472,7 +600,7 @@ function pauseIcon() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>`;
 }
 
-// ============ Touch Scroll with Momentum & Easing ============
+// ============ Touch & Wheel Scroll with Momentum ============
 
 let touchStartY = 0;
 let touchStartX = 0;
@@ -481,7 +609,7 @@ let touchLastTime = 0;
 let touchVelocity = 0;
 let touchAccumulated = 0;
 let momentumRAF = null;
-const TOUCH_STEP_PX = 40; // pixels of drag per scroll step
+const TOUCH_STEP_PX = 40;
 
 function cancelMomentum() {
   if (momentumRAF) {
@@ -501,74 +629,97 @@ document.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 document.addEventListener('touchmove', (e) => {
+  if (currentTab !== 'mixtapes') return;
   const y = e.touches[0].clientY;
   const now = Date.now();
   const dt = now - touchLastTime;
 
-  // Track velocity (px/ms), smoothed
   if (dt > 0) {
     const instantVel = (touchLastY - y) / dt;
     touchVelocity = touchVelocity * 0.3 + instantVel * 0.7;
   }
 
-  // Accumulate drag distance and advance index (no render per step)
   touchAccumulated += (touchLastY - y);
   let stepped = false;
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      scrollIndexBy(1);
+      scrollMixtapeBy(1);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      scrollIndexBy(-1);
+      scrollMixtapeBy(-1);
       touchAccumulated += TOUCH_STEP_PX;
     }
     stepped = true;
   }
-  if (stepped) scheduleRender();
+  if (stepped) updateMixtapeView();
 
   touchLastY = y;
   touchLastTime = now;
 }, { passive: true });
 
 document.addEventListener('touchend', () => {
-  // Momentum: compute total items to scroll based on velocity, then animate through them
-  const vel = touchVelocity; // px/ms (positive = scrolling down)
-  if (Math.abs(vel) < 0.1) return;
+  if (currentTab !== 'mixtapes') return;
+  startMomentum(touchVelocity);
+}, { passive: true });
 
-  // Calculate total items to coast through based on velocity
-  const totalItems = Math.round(Math.abs(vel) * 15);
+// Wheel event for laptop/trackpad testing
+document.addEventListener('wheel', (e) => {
+  if (currentTab !== 'mixtapes') return;
+  e.preventDefault();
+  cancelMomentum();
+
+  // Accumulate wheel delta
+  touchAccumulated += e.deltaY;
+  let stepped = false;
+  while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
+    if (touchAccumulated > 0) {
+      scrollMixtapeBy(1);
+      touchAccumulated -= TOUCH_STEP_PX;
+    } else {
+      scrollMixtapeBy(-1);
+      touchAccumulated += TOUCH_STEP_PX;
+    }
+    stepped = true;
+  }
+  if (stepped) updateMixtapeView();
+}, { passive: false });
+
+function startMomentum(vel) {
+  if (Math.abs(vel) < 0.08) return;
+
+  const totalItems = Math.min(Math.round(Math.abs(vel) * 20), MIXTAPES.length);
   if (totalItems < 1) return;
 
   const direction = vel > 0 ? 1 : -1;
   let itemsScrolled = 0;
-  const startTime = Date.now();
-  // Duration scales with items but caps out
-  const duration = Math.min(80 + totalItems * 60, 800);
+  const startTime = performance.now();
+  const duration = Math.min(100 + totalItems * 50, 800);
 
   function easeOutCubic(t) {
     return 1 - Math.pow(1 - t, 3);
   }
 
-  function momentumStep() {
-    const elapsed = Date.now() - startTime;
+  function step(now) {
+    const elapsed = now - startTime;
     const progress = Math.min(elapsed / duration, 1);
-    const easedProgress = easeOutCubic(progress);
-    const targetItems = Math.round(easedProgress * totalItems);
+    const target = Math.round(easeOutCubic(progress) * totalItems);
 
-    while (itemsScrolled < targetItems) {
-      scrollIndexBy(direction);
-      itemsScrolled++;
+    if (target > itemsScrolled) {
+      const delta = target - itemsScrolled;
+      scrollMixtapeBy(direction * delta);
+      itemsScrolled = target;
+      updateMixtapeView();
     }
-    scheduleRender();
 
     if (progress < 1) {
-      momentumRAF = requestAnimationFrame(momentumStep);
+      momentumRAF = requestAnimationFrame(step);
     } else {
       momentumRAF = null;
     }
   }
-  momentumRAF = requestAnimationFrame(momentumStep);
-}, { passive: true });
+  cancelMomentum();
+  momentumRAF = requestAnimationFrame(step);
+}
 
 // ============ R1 Hardware Events ============
 
@@ -578,7 +729,7 @@ window.addEventListener('scrollDown', handleScrollDown);
 window.addEventListener('sideClick', () => {
   if (currentStation && isPlaying) {
     stopPlayback();
-    render();
+    updateCurrentView();
   } else if (currentTab === 'live' && stations.length > 0) {
     togglePlay(currentStation || 1);
   } else if (currentTab === 'mixtapes') {

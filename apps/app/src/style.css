@@ -100,7 +100,7 @@ html, body {
   overflow: hidden;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: flex 0.2s ease;
+  transition: flex 0.4s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .station-card.expanded {
@@ -220,35 +220,30 @@ html, body {
 /* ========== Mixtapes ========== */
 .mixtape-container {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 2px 6px 6px;
-  overflow: hidden;
   position: relative;
+  overflow: hidden;
+  padding: 0 6px;
 }
 
 .mixtape-card {
-  flex: 1;
+  position: absolute;
+  left: 6px;
+  right: 6px;
   border-radius: 8px;
   background: #1a1a1a;
   background-size: cover;
   background-position: center;
-  position: relative;
   overflow: hidden;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  opacity: 0.5;
-  transition: flex 0.2s ease, opacity 0.2s ease;
-}
-
-.mixtape-card.focused {
-  flex: 2.5;
-  opacity: 1;
+  will-change: transform, opacity;
+  transition: transform 0.35s cubic-bezier(0.25, 0.1, 0.25, 1),
+              opacity 0.35s ease,
+              height 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .mixtape-card.playing {
-  border: 1px solid #FE5F00;
+  box-shadow: inset 0 0 0 1px #FE5F00;
 }
 
 .mixtape-overlay {
@@ -272,6 +267,7 @@ html, body {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  transition: opacity 0.2s ease;
 }
 
 .mixtape-info {
@@ -295,15 +291,58 @@ html, body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  transition: opacity 0.2s ease;
 }
 
 .scroll-indicator {
   position: absolute;
-  bottom: 8px;
+  bottom: 4px;
   right: 10px;
   font-size: 8px;
   color: #666;
   font-weight: 600;
+  z-index: 5;
+}
+
+/* Sticky now-playing bar */
+.mixtape-now-playing {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  background: rgba(14, 14, 16, 0.92);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid #FE5F00;
+  z-index: 10;
+  cursor: pointer;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.mixtape-now-playing.at-top { top: 2px; }
+.mixtape-now-playing.at-bottom { bottom: 18px; }
+.mixtape-now-playing .np-art {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+.mixtape-now-playing .np-name {
+  font-size: 9px;
+  font-weight: 700;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mixtape-now-playing .np-indicator {
+  font-size: 8px;
+  color: #FE5F00;
+  font-weight: 700;
 }
 
 /* ========== Volume Toast (floating) ========== */
