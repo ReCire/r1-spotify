@@ -418,7 +418,7 @@ async function fetchPlaylists() {
 }
 
 async function fetchPlaylistTracks(playlistId) {
-  const data = await api(`/playlists/${playlistId}/tracks?limit=100&fields=items(track(name,uri,duration_ms,artists(name),album(name,images,uri)))`);
+  const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
   if (data && data.items) {
     playlistTracks = data.items
       .filter(item => item.track && item.track.uri)
@@ -447,96 +447,117 @@ async function fetchHomeSections() {
       seen.add(i.track?.uri);
       return true;
     }).slice(0, 6);
-    homeSections.push({
-      title: 'Recently Played',
-      items: tracks.map(i => ({
-        name: i.track.name,
-        subtitle: i.track.artists?.[0]?.name || '',
-        image: i.track.album?.images?.[0]?.url || '',
-        type: 'track',
-        uri: i.track.uri,
-        contextUri: i.context?.uri || i.track.album?.uri || ''
-      }))
-    });
-  }
-
-  // User's top tracks
-  const topTracks = await api('/me/top/tracks?limit=6&time_range=short_term');
-  if (topTracks?.items?.length) {
-    homeSections.push({
-      title: 'Your Top Tracks',
-      items: topTracks.items.map(t => ({
-        name: t.name,
-        subtitle: t.artists?.[0]?.name || '',
-        image: t.album?.images?.[0]?.url || '',
-        type: 'track',
-        uri: t.uri,
-        contextUri: t.album?.uri || ''
-      }))
-    });
-  }
-
-  // User's playlists as "Made for You"
-  if (playlists.length) {
-    const madeFor = playlists.filter(p => p.owner === 'Spotify' || p.name.includes('Mix') || p.name.includes('Discover'));
-    if (madeFor.length) {
+    if (tracks.length) {
       homeSections.push({
-        title: 'Made for You',
-        items: madeFor.slice(0, 6).map(p => ({
-          name: p.name,
-          subtitle: p.owner,
-          image: p.image,
-          type: 'playlist',
-          uri: p.uri,
-          id: p.id
+        title: 'Recents',
+        image: tracks[0].track.album?.images?.[0]?.url || '',
+        type: 'category',
+        action: 'recents',
+        items: tracks.map(i => ({
+          name: i.track.name,
+          subtitle: i.track.artists?.[0]?.name || '',
+          image: i.track.album?.images?.[0]?.url || '',
+          type: 'track',
+          uri: i.track.uri,
+          contextUri: i.context?.uri || i.track.album?.uri || ''
         }))
       });
     }
   }
 
-  // User playlists
+  // Made for you
   if (playlists.length) {
+    const madeFor = playlists.filter(p => p.owner === 'Spotify' || p.name.toLowerCase().includes('mix') || p.name.toLowerCase().includes('discover'));
+    if (madeFor.length) {
+      homeSections.push({
+        title: 'Made For You',
+        image: madeFor[0].image,
+        type: 'category',
+        action: 'madefor',
+        items: madeFor.slice(0, 8).map(p => ({
+          name: p.name, subtitle: 'Playlist', image: p.image,
+          type: 'playlist', uri: p.uri, id: p.id
+        }))
+      });
+    }
+  }
+
+  // Top tracks (Picked for you)
+  const topTracks = await api('/me/top/tracks?limit=8&time_range=short_term');
+  if (topTracks?.items?.length) {
     homeSections.push({
-      title: 'Your Library',
-      items: playlists.slice(0, 8).map(p => ({
-        name: p.name,
-        subtitle: `${p.trackCount} tracks`,
-        image: p.image,
-        type: 'playlist',
-        uri: p.uri,
-        id: p.id
+      title: 'Picked For You',
+      image: topTracks.items[0].album?.images?.[0]?.url || '',
+      type: 'category',
+      action: 'pickedforyou',
+      items: topTracks.items.map(t => ({
+        name: t.name, subtitle: t.artists?.[0]?.name || '',
+        image: t.album?.images?.[0]?.url || '',
+        type: 'track', uri: t.uri,
+        contextUri: t.album?.uri || ''
       }))
     });
   }
 
+  // Jump Back In (user playlists)
+  if (playlists.length) {
+    const userPl = playlists.filter(p => p.owner !== 'Spotify').slice(0, 8);
+    if (userPl.length) {
+      homeSections.push({
+        title: 'Jump Back In',
+        image: userPl[0].image,
+        type: 'category',
+        action: 'jumpbackin',
+        items: userPl.map(p => ({
+          name: p.name, subtitle: `${p.trackCount} tracks`,
+          image: p.image, type: 'playlist', uri: p.uri, id: p.id
+        }))
+      });
+    }
+  }
+
   // Top artists
-  const topArtists = await api('/me/top/artists?limit=6&time_range=medium_term');
+  const topArtists = await api('/me/top/artists?limit=8&time_range=medium_term');
   if (topArtists?.items?.length) {
     homeSections.push({
       title: 'Your Top Artists',
+      image: topArtists.items[0].images?.[0]?.url || '',
+      type: 'category',
+      action: 'topartists',
       items: topArtists.items.map(a => ({
-        name: a.name,
-        subtitle: `${formatFollowers(a.followers?.total)} followers`,
+        name: a.name, subtitle: 'Artist',
         image: a.images?.[0]?.url || '',
-        type: 'artist',
-        id: a.id,
-        uri: a.uri
+        type: 'artist', id: a.id, uri: a.uri
       }))
     });
   }
 
   // New releases
-  const newReleases = await api('/browse/new-releases?limit=6');
+  const newReleases = await api('/browse/new-releases?limit=8');
   if (newReleases?.albums?.items?.length) {
     homeSections.push({
       title: 'New Releases',
+      image: newReleases.albums.items[0].images?.[0]?.url || '',
+      type: 'category',
+      action: 'newreleases',
       items: newReleases.albums.items.map(a => ({
-        name: a.name,
-        subtitle: a.artists?.[0]?.name || '',
+        name: a.name, subtitle: a.artists?.[0]?.name || '',
         image: a.images?.[0]?.url || '',
-        type: 'album',
-        id: a.id,
-        uri: a.uri
+        type: 'album', id: a.id, uri: a.uri
+      }))
+    });
+  }
+
+  // Your Library
+  if (playlists.length) {
+    homeSections.push({
+      title: 'Your Library',
+      image: playlists[0].image,
+      type: 'category',
+      action: 'library',
+      items: playlists.slice(0, 20).map(p => ({
+        name: p.name, subtitle: `Playlist · ${p.trackCount} tracks`,
+        image: p.image, type: 'playlist', uri: p.uri, id: p.id
       }))
     });
   }
@@ -545,7 +566,7 @@ async function fetchHomeSections() {
 async function fetchArtist(artistId) {
   const [artist, topTracks, albums, related] = await Promise.all([
     api(`/artists/${artistId}`),
-    api(`/artists/${artistId}/top-tracks?market=from_token`),
+    api(`/artists/${artistId}/top-tracks`),
     api(`/artists/${artistId}/albums?include_groups=album,single&limit=20`),
     api(`/artists/${artistId}/related-artists`)
   ]);
@@ -607,64 +628,50 @@ async function fetchAlbumTracks(albumId) {
 
 async function searchSpotify(query) {
   if (!query.trim()) { searchResults = []; return; }
-  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=6`);
+  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=5`);
   if (!data) return;
 
   searchResults = [];
   if (data.artists?.items) {
     data.artists.items.forEach(a => {
       searchResults.push({
-        type: 'artist',
-        name: a.name,
-        subtitle: `${formatFollowers(a.followers?.total)} followers`,
-        artwork: a.images?.[0]?.url || '',
-        id: a.id,
-        uri: a.uri
+        type: 'Artist', name: a.name, subtitle: '',
+        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
       });
     });
   }
   if (data.albums?.items) {
     data.albums.items.forEach(a => {
       searchResults.push({
-        type: 'album',
-        name: a.name,
-        subtitle: a.artists?.[0]?.name || '',
-        artwork: a.images?.[0]?.url || '',
-        id: a.id,
-        uri: a.uri
+        type: 'Album', name: a.name, subtitle: a.artists?.[0]?.name || '',
+        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
       });
     });
   }
   if (data.tracks?.items) {
     data.tracks.items.forEach(t => {
       searchResults.push({
-        type: 'track',
-        name: t.name,
+        type: 'Song', name: t.name,
         subtitle: t.artists?.map(a => a.name).join(', ') || '',
         artwork: t.album?.images?.[0]?.url || '',
-        uri: t.uri,
-        contextUri: t.album?.uri || ''
+        uri: t.uri, contextUri: t.album?.uri || ''
       });
     });
   }
   if (data.playlists?.items) {
     data.playlists.items.filter(Boolean).forEach(p => {
       searchResults.push({
-        type: 'playlist',
-        name: p.name,
-        subtitle: p.owner?.display_name || '',
-        artwork: p.images?.[0]?.url || '',
-        uri: p.uri,
-        id: p.id
+        type: 'Playlist', name: p.name, subtitle: p.owner?.display_name || '',
+        artwork: p.images?.[0]?.url || '', uri: p.uri, id: p.id
       });
     });
   }
 }
 
 function formatFollowers(n) {
-  if (!n) return '0';
+  if (!n || n === 0) return '';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+  if (n >= 1000) return Math.round(n / 1000) + 'K';
   return n.toString();
 }
 
@@ -712,6 +719,7 @@ function render() {
   switch (currentView) {
     case 'login': renderLogin(app); break;
     case 'home': renderHome(app); break;
+    case 'section': renderSection(app); break;
     case 'playlist': renderPlaylist(app); break;
     case 'album': renderAlbum(app); break;
     case 'nowplaying': renderNowPlaying(app); break;
@@ -760,60 +768,80 @@ function showOnboarding() {
   setTimeout(() => overlay.remove(), 6000);
 }
 
-// ============ Home View ============
+// ============ Home View (Category Cards - full width stacked) ============
 
 function renderHome(app) {
   const header = createHeader('Home', true);
   app.appendChild(header);
 
   const container = document.createElement('div');
-  container.className = 'home-container';
+  container.className = 'list-container';
   container.id = 'list-container';
 
   if (homeSections.length === 0) {
     container.innerHTML = `<div class="empty-state">Loading…</div>`;
   } else {
-    let flatIdx = 0;
-    homeSections.forEach(section => {
-      const sectionEl = document.createElement('div');
-      sectionEl.className = 'home-section';
-
-      const titleEl = document.createElement('div');
-      titleEl.className = 'section-title';
-      titleEl.textContent = section.title;
-      sectionEl.appendChild(titleEl);
-
-      const row = document.createElement('div');
-      row.className = 'card-row';
-
-      section.items.forEach(item => {
-        const card = document.createElement('div');
-        card.className = `card ${flatIdx === scrollIndex ? 'focused' : ''}`;
-        card.dataset.idx = flatIdx;
-        card.innerHTML = `
-          <div class="card-art" style="background-image:url('${item.image}')"></div>
-          <div class="card-info">
-            <div class="card-name">${truncate(item.name, 16)}</div>
-            <div class="card-sub">${truncate(item.subtitle, 18)}</div>
-          </div>
-        `;
-        card.addEventListener('click', () => handleHomeItemClick(item));
-        row.appendChild(card);
-        flatIdx++;
-      });
-
-      sectionEl.appendChild(row);
-      container.appendChild(sectionEl);
+    homeSections.forEach((section, i) => {
+      const card = document.createElement('div');
+      card.className = `cat-card ${i === scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${section.image}')`;
+      card.innerHTML = `
+        <div class="cat-card-overlay"></div>
+        <div class="cat-card-content">
+          <span class="cat-card-title">${section.title}</span>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => openSection(section));
+      container.appendChild(card);
     });
   }
 
   app.appendChild(container);
-
   if (currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
 
-function handleHomeItemClick(item) {
+// ============ Section View (Content Cards - items within a category) ============
+
+let currentSection = null;
+
+function renderSection(app) {
+  if (!currentSection) { goBack(); return; }
+
+  const header = createHeader(currentSection.title, false);
+  app.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  container.id = 'list-container';
+
+  currentSection.items.forEach((item, i) => {
+    const card = document.createElement('div');
+    card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = i;
+    card.style.backgroundImage = `url('${item.image}')`;
+    card.innerHTML = `
+      <div class="content-card-overlay"></div>
+      <div class="content-card-content">
+        <div class="content-card-labels">
+          <div class="content-card-name">${truncate(item.name, 28)}</div>
+          <div class="content-card-sub">${item.subtitle ? `<span>${item.type === 'track' ? 'Song' : item.type === 'playlist' ? 'Playlist' : item.type === 'album' ? 'Album' : 'Artist'}</span>${item.subtitle ? `<span class="dot">·</span><span>${truncate(item.subtitle, 20)}</span>` : ''}` : `<span>${item.type === 'track' ? 'Song' : item.type === 'playlist' ? 'Playlist' : item.type === 'album' ? 'Album' : 'Artist'}</span>`}</div>
+        </div>
+        ${chevronRight()}
+      </div>
+    `;
+    card.addEventListener('click', () => handleContentCardClick(item));
+    container.appendChild(card);
+  });
+
+  app.appendChild(container);
+  if (currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+function handleContentCardClick(item) {
   if (item.type === 'playlist') {
     openPlaylistById(item.id, item.name, item.uri);
   } else if (item.type === 'artist') {
@@ -826,80 +854,89 @@ function handleHomeItemClick(item) {
   }
 }
 
-// ============ Playlist View ============
+function openSection(section) {
+  currentSection = section;
+  navigate('section');
+}
+
+// ============ Playlist View (Content Cards) ============
 
 function renderPlaylist(app) {
   const header = createHeader(truncate(selectedPlaylist?.name || 'Playlist', 18), false);
   app.appendChild(header);
 
-  const list = document.createElement('div');
-  list.className = 'list-container';
-  list.id = 'list-container';
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  container.id = 'list-container';
 
   if (playlistTracks.length === 0) {
-    list.innerHTML = `<div class="empty-state">Loading tracks…</div>`;
+    container.innerHTML = `<div class="empty-state">Loading tracks…</div>`;
   } else {
     playlistTracks.forEach((track, i) => {
-      const isActive = currentTrack && currentTrack.uri === track.uri && isPlaying;
-      const item = document.createElement('div');
-      item.className = `list-item ${i === scrollIndex ? 'focused' : ''} ${isActive ? 'active' : ''}`;
-      item.dataset.idx = i;
-      item.innerHTML = `
-        <div class="list-item-num">${isActive ? eqIcon() : (i + 1)}</div>
-        <div class="list-item-info">
-          <div class="list-item-name">${truncate(track.name, 22)}</div>
-          <div class="list-item-meta">${truncate(track.artist, 28)}</div>
+      const card = document.createElement('div');
+      card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${track.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(track.name, 26)}</div>
+            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
+          </div>
+          ${chevronRight()}
         </div>
-        <div class="list-item-dur">${formatTime(track.durationMs)}</div>
       `;
-      item.addEventListener('click', () => {
+      card.addEventListener('click', () => {
         playTrackInContext(selectedPlaylist.uri, track.uri);
         navigate('nowplaying');
       });
-      list.appendChild(item);
+      container.appendChild(card);
     });
   }
 
-  app.appendChild(list);
+  app.appendChild(container);
   if (currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
 
-// ============ Album View ============
+// ============ Album View (Content Cards) ============
 
 function renderAlbum(app) {
   const header = createHeader(truncate(selectedAlbum?.name || 'Album', 18), false);
   app.appendChild(header);
 
-  const list = document.createElement('div');
-  list.className = 'list-container';
-  list.id = 'list-container';
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  container.id = 'list-container';
 
   if (albumTracks.length === 0) {
-    list.innerHTML = `<div class="empty-state">Loading…</div>`;
+    container.innerHTML = `<div class="empty-state">Loading…</div>`;
   } else {
     albumTracks.forEach((track, i) => {
-      const isActive = currentTrack && currentTrack.uri === track.uri && isPlaying;
-      const item = document.createElement('div');
-      item.className = `list-item ${i === scrollIndex ? 'focused' : ''} ${isActive ? 'active' : ''}`;
-      item.dataset.idx = i;
-      item.innerHTML = `
-        <div class="list-item-num">${isActive ? eqIcon() : (i + 1)}</div>
-        <div class="list-item-info">
-          <div class="list-item-name">${truncate(track.name, 22)}</div>
-          <div class="list-item-meta">${truncate(track.artist, 28)}</div>
+      const card = document.createElement('div');
+      card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${track.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(track.name, 26)}</div>
+            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
+          </div>
+          ${chevronRight()}
         </div>
-        <div class="list-item-dur">${formatTime(track.durationMs)}</div>
       `;
-      item.addEventListener('click', () => {
+      card.addEventListener('click', () => {
         playContext(selectedAlbum.uri, i);
         navigate('nowplaying');
       });
-      list.appendChild(item);
+      container.appendChild(card);
     });
   }
 
-  app.appendChild(list);
+  app.appendChild(container);
   if (currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
@@ -913,23 +950,23 @@ function renderArtist(app) {
   container.className = 'artist-view';
   container.id = 'list-container';
 
-  // Hero section with full-screen art
   container.innerHTML = `
     <div class="artist-hero" style="background-image:url('${artistData.image}')">
       <div class="artist-hero-overlay">
         <button class="artist-back" id="artist-back">${chevronLeft()}</button>
-        <div class="artist-hero-info">
+        <div class="artist-hero-bottom">
           <div class="artist-name">${artistData.name}</div>
-          <div class="artist-stats">${formatFollowers(artistData.followers)} followers · ${artistData.popularity}% popularity</div>
-        </div>
-        <div class="artist-actions">
-          <button class="artist-play-btn" id="artist-play">${playIcon()}</button>
+          <div class="artist-stats">${formatFollowers(artistData.followers)} listeners</div>
+          <div class="artist-actions">
+            <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
+            <button class="artist-follow-btn" id="artist-follow">${followIcon()} Follow</button>
+          </div>
         </div>
       </div>
     </div>
-    <div class="artist-sections">
+    <div class="artist-explore">
       <div class="artist-expand" id="artist-expand">
-        <span>Explore</span>${chevronDown()}
+        <span>Discography</span>${chevronDown()}
       </div>
     </div>
   `;
@@ -947,6 +984,10 @@ function renderArtist(app) {
         navigate('nowplaying');
       }
     });
+    document.getElementById('artist-follow')?.addEventListener('click', async () => {
+      await api(`/me/following?type=artist&ids=${artistData.id}`, { method: 'PUT' });
+      showToast('Following ' + artistData.name, 'info');
+    });
     document.getElementById('artist-expand')?.addEventListener('click', () => {
       navigate('discography');
     });
@@ -955,7 +996,7 @@ function renderArtist(app) {
   if (currentTrack) app.appendChild(createMiniPlayer());
 }
 
-// ============ Discography View ============
+// ============ Discography View (Content Cards) ============
 
 function renderDiscography(app) {
   if (!artistData) { goBack(); return; }
@@ -964,87 +1005,50 @@ function renderDiscography(app) {
   app.appendChild(header);
 
   const container = document.createElement('div');
-  container.className = 'home-container';
+  container.className = 'list-container';
   container.id = 'list-container';
 
-  let flatIdx = 0;
+  let allItems = [];
 
   // Popular tracks
-  if (artistData.topTracks.length) {
-    const sec = createCardSection('Popular', artistData.topTracks.map(t => ({
-      name: t.name, subtitle: formatTime(t.durationMs), image: t.artwork,
-      type: 'track', uri: t.uri, contextUri: t.contextUri
-    })), flatIdx);
-    container.appendChild(sec.el);
-    flatIdx = sec.nextIdx;
-  }
-
+  artistData.topTracks.forEach(t => {
+    allItems.push({ name: t.name, subtitle: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri });
+  });
   // Albums
-  if (artistData.albums.length) {
-    const sec = createCardSection('Albums', artistData.albums.map(a => ({
-      name: a.name, subtitle: a.year, image: a.image,
-      type: 'album', id: a.id, uri: a.uri
-    })), flatIdx);
-    container.appendChild(sec.el);
-    flatIdx = sec.nextIdx;
-  }
+  artistData.albums.forEach(a => {
+    allItems.push({ name: a.name, subtitle: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri });
+  });
+  // Singles
+  artistData.singles.forEach(a => {
+    allItems.push({ name: a.name, subtitle: a.year + ' · Single', image: a.image, type: 'album', id: a.id, uri: a.uri });
+  });
+  // Related
+  artistData.related.forEach(a => {
+    allItems.push({ name: a.name, subtitle: 'Artist', image: a.image, type: 'artist', id: a.id, uri: a.uri });
+  });
 
-  // Singles & EPs
-  if (artistData.singles.length) {
-    const sec = createCardSection('Singles & EPs', artistData.singles.map(a => ({
-      name: a.name, subtitle: a.year, image: a.image,
-      type: 'album', id: a.id, uri: a.uri
-    })), flatIdx);
-    container.appendChild(sec.el);
-    flatIdx = sec.nextIdx;
-  }
-
-  // Related artists
-  if (artistData.related.length) {
-    const sec = createCardSection('Fans Also Like', artistData.related.map(a => ({
-      name: a.name, subtitle: formatFollowers(a.followers), image: a.image,
-      type: 'artist', id: a.id, uri: a.uri
-    })), flatIdx);
-    container.appendChild(sec.el);
-    flatIdx = sec.nextIdx;
-  }
+  allItems.forEach((item, i) => {
+    const card = document.createElement('div');
+    card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = i;
+    card.style.backgroundImage = `url('${item.image}')`;
+    card.innerHTML = `
+      <div class="content-card-overlay"></div>
+      <div class="content-card-content">
+        <div class="content-card-labels">
+          <div class="content-card-name">${truncate(item.name, 26)}</div>
+          <div class="content-card-sub">${item.subtitle ? `<span>${item.type === 'track' ? 'Song' : item.type === 'album' ? 'Album' : 'Artist'}</span><span class="dot">·</span><span>${truncate(item.subtitle, 18)}</span>` : `<span>${item.type === 'track' ? 'Song' : item.type === 'album' ? 'Album' : 'Artist'}</span>`}</div>
+        </div>
+        ${chevronRight()}
+      </div>
+    `;
+    card.addEventListener('click', () => handleContentCardClick(item));
+    container.appendChild(card);
+  });
 
   app.appendChild(container);
   if (currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
-}
-
-function createCardSection(title, items, startIdx) {
-  const sectionEl = document.createElement('div');
-  sectionEl.className = 'home-section';
-
-  const titleEl = document.createElement('div');
-  titleEl.className = 'section-title';
-  titleEl.textContent = title;
-  sectionEl.appendChild(titleEl);
-
-  const row = document.createElement('div');
-  row.className = 'card-row';
-
-  let idx = startIdx;
-  items.forEach(item => {
-    const card = document.createElement('div');
-    card.className = `card ${idx === scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = idx;
-    card.innerHTML = `
-      <div class="card-art" style="background-image:url('${item.image}')"></div>
-      <div class="card-info">
-        <div class="card-name">${truncate(item.name, 14)}</div>
-        <div class="card-sub">${truncate(item.subtitle, 16)}</div>
-      </div>
-    `;
-    card.addEventListener('click', () => handleHomeItemClick(item));
-    row.appendChild(card);
-    idx++;
-  });
-
-  sectionEl.appendChild(row);
-  return { el: sectionEl, nextIdx: idx };
 }
 
 // ============ Now Playing View ============
@@ -1106,7 +1110,7 @@ function updateNowPlaying() {
   }
 }
 
-// ============ Search View ============
+// ============ Search View (Content Cards) ============
 
 function renderSearch(app) {
   const header = createHeader('Search', false);
@@ -1114,22 +1118,20 @@ function renderSearch(app) {
 
   const searchBox = document.createElement('div');
   searchBox.className = 'search-box';
-  searchBox.innerHTML = `
-    <input type="text" class="search-input" id="search-input" placeholder="Artists, albums, tracks…" autocomplete="off">
-  `;
+  searchBox.innerHTML = `<input type="text" class="search-input" id="search-input" placeholder="What do you want to play?" autocomplete="off">`;
   app.appendChild(searchBox);
 
-  const list = document.createElement('div');
-  list.className = 'list-container search-results';
-  list.id = 'list-container';
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  container.id = 'list-container';
 
   if (searchResults.length === 0) {
-    list.innerHTML = `<div class="empty-state">Type to search</div>`;
+    container.innerHTML = `<div class="empty-state">Type to search</div>`;
   } else {
-    renderSearchResults(list);
+    renderSearchCards(container);
   }
 
-  app.appendChild(list);
+  app.appendChild(container);
   if (currentTrack) app.appendChild(createMiniPlayer());
 
   const input = document.getElementById('search-input');
@@ -1144,7 +1146,7 @@ function renderSearch(app) {
       if (listEl) {
         listEl.innerHTML = '';
         if (searchResults.length) {
-          renderSearchResults(listEl);
+          renderSearchCards(listEl);
         } else if (input.value) {
           listEl.innerHTML = `<div class="empty-state">No results</div>`;
         }
@@ -1155,31 +1157,35 @@ function renderSearch(app) {
   scrollFocusedIntoView();
 }
 
-function renderSearchResults(container) {
+function renderSearchCards(container) {
   searchResults.forEach((item, i) => {
-    const el = document.createElement('div');
-    el.className = `list-item ${i === scrollIndex ? 'focused' : ''}`;
-    el.dataset.idx = i;
-    el.innerHTML = `
-      <img class="list-item-art ${item.type === 'artist' ? 'round' : ''}" src="${item.artwork || ''}" alt="">
-      <div class="list-item-info">
-        <div class="list-item-name">${truncate(item.name, 20)}</div>
-        <div class="list-item-meta">${capitalize(item.type)} · ${truncate(item.subtitle, 20)}</div>
+    const card = document.createElement('div');
+    card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = i;
+    card.style.backgroundImage = `url('${item.artwork}')`;
+    card.innerHTML = `
+      <div class="content-card-overlay"></div>
+      <div class="content-card-content">
+        <div class="content-card-labels">
+          <div class="content-card-name">${truncate(item.name, 26)}</div>
+          <div class="content-card-sub">${item.subtitle ? `<span>${item.type}</span><span class="dot">·</span><span>${truncate(item.subtitle, 18)}</span>` : `<span>${item.type}</span>`}</div>
+        </div>
+        ${chevronRight()}
       </div>
     `;
-    el.addEventListener('click', () => handleSearchItemClick(item));
-    container.appendChild(el);
+    card.addEventListener('click', () => handleSearchItemClick(item));
+    container.appendChild(card);
   });
 }
 
 function handleSearchItemClick(item) {
-  if (item.type === 'artist') {
+  if (item.type === 'Artist') {
     openArtist(item.id);
-  } else if (item.type === 'album') {
+  } else if (item.type === 'Album') {
     openAlbum(item.id);
-  } else if (item.type === 'playlist') {
+  } else if (item.type === 'Playlist') {
     openPlaylistById(item.id, item.name, item.uri);
-  } else if (item.type === 'track') {
+  } else if (item.type === 'Song') {
     playTrackInContext(item.contextUri || item.uri, item.uri);
     navigate('nowplaying');
   }
@@ -1292,8 +1298,8 @@ function scrollFocusedIntoView() {
   const container = document.getElementById('list-container');
   if (!container) return;
 
-  const items = container.querySelectorAll('.list-item, .card');
-  items.forEach((item, i) => {
+  const items = container.querySelectorAll('.cat-card, .content-card');
+  items.forEach(item => {
     const idx = parseInt(item.dataset.idx);
     item.classList.toggle('focused', idx === scrollIndex);
   });
@@ -1311,14 +1317,15 @@ function scrollFocusedIntoView() {
 }
 
 function getListLength() {
-  if (currentView === 'home' || currentView === 'discography') {
-    const container = document.getElementById('list-container');
-    if (container) return container.querySelectorAll('.card').length;
-    return 0;
-  }
+  if (currentView === 'home') return homeSections.length;
+  if (currentView === 'section') return currentSection ? currentSection.items.length : 0;
   if (currentView === 'playlist') return playlistTracks.length;
   if (currentView === 'album') return albumTracks.length;
   if (currentView === 'search') return searchResults.length;
+  if (currentView === 'discography') {
+    if (!artistData) return 0;
+    return artistData.topTracks.length + artistData.albums.length + artistData.singles.length + artistData.related.length;
+  }
   return 0;
 }
 
@@ -1405,6 +1412,14 @@ function chevronDown() {
   return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`;
 }
 
+function chevronRight() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" class="chevron-right"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
+}
+
+function followIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>`;
+}
+
 function noteIcon() {
   return `<svg viewBox="0 0 24 24" fill="#535353"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`;
 }
@@ -1454,18 +1469,9 @@ window.addEventListener('sideClick', () => {
     togglePlayback();
   } else if (currentView === 'artist') {
     navigate('discography');
-  } else if (currentView === 'home' || currentView === 'discography') {
-    // Click focused card
-    const focused = document.querySelector('.card.focused');
+  } else {
+    const focused = document.querySelector('.cat-card.focused, .content-card.focused');
     if (focused) focused.click();
-  } else if (currentView === 'playlist' && playlistTracks[scrollIndex]) {
-    playTrackInContext(selectedPlaylist.uri, playlistTracks[scrollIndex].uri);
-    navigate('nowplaying');
-  } else if (currentView === 'album' && albumTracks[scrollIndex]) {
-    playContext(selectedAlbum.uri, scrollIndex);
-    navigate('nowplaying');
-  } else if (currentView === 'search' && searchResults[scrollIndex]) {
-    handleSearchItemClick(searchResults[scrollIndex]);
   }
 });
 
