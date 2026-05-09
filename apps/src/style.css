@@ -102,11 +102,11 @@ html, body {
 
 .filter-btn {
   flex-shrink: 0;
-  height: 26px;
-  padding: 0 12px;
+  height: 20px;
+  padding: 0 10px;
   background: #282828;
   border: none;
-  border-radius: 13px;
+  border-radius: 10px;
   color: #b3b3b3;
   font-size: 9px;
   font-weight: 600;
