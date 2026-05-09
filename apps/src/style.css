@@ -560,24 +560,33 @@ html, body {
 
 /* ========== Mini Player ========== */
 .mini-player {
-  flex-shrink: 0;
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
   height: 36px;
-  background: #1a1a1a;
-  border-top: 1px solid #222;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 0 8px;
+  background: rgba(14, 14, 16, 0.92);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid #1DB954;
+  z-index: 10;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .mini-art {
-  width: 28px;
-  height: 28px;
-  border-radius: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
   object-fit: cover;
   background: #121212;
+  flex-shrink: 0;
 }
 
 .mini-info {
@@ -587,37 +596,27 @@ html, body {
 
 .mini-name {
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.mini-artist {
-  font-size: 7px;
-  color: #b3b3b3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mini-play {
-  width: 22px;
-  height: 22px;
-  background: none;
-  border: none;
   color: #fff;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
 }
 
-.mini-play svg {
-  width: 14px;
-  height: 14px;
+.mini-indicator {
+  font-size: 8px;
+  color: #1DB954;
+  font-weight: 700;
+  flex-shrink: 0;
+  letter-spacing: 0.5px;
+}
+
+/* ========== List Container ========== */
+.list-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 50px;
 }
 
 /* ========== Now Playing View ========== */

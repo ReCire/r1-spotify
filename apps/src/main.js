@@ -1535,14 +1535,9 @@ function createMiniPlayer() {
     <img class="mini-art" src="${currentTrack?.artwork || ''}" alt="">
     <div class="mini-info">
       <div class="mini-name">${truncate(currentTrack?.name || '', 18)}</div>
-      <div class="mini-artist">${truncate(currentTrack?.artist || '', 20)}</div>
     </div>
-    <button class="mini-play">${isPlaying ? pauseIcon() : playIcon()}</button>
+    <div class="mini-indicator">${isPlaying ? 'PLAYING' : 'PAUSED'}</div>
   `;
-  mini.querySelector('.mini-play').addEventListener('click', (e) => {
-    e.stopPropagation();
-    togglePlayback();
-  });
   mini.addEventListener('click', () => navigate('nowplaying'));
   return mini;
 }
