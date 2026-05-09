@@ -584,13 +584,11 @@ async function fetchHomeSections() {
 }
 
 async function fetchArtist(artistId) {
-  const [artist, topTracks, albumsData, singlesData, appearsOn, related] = await Promise.all([
+  const [artist, topTracks, albumsData, related] = await Promise.all([
     api(`/artists/${artistId}`),
-    api(`/artists/${artistId}/top-tracks?market=US`),
-    api(`/artists/${artistId}/albums?include_groups=album&limit=20`),
-    api(`/artists/${artistId}/albums?include_groups=single&limit=20`),
-    api(`/artists/${artistId}/albums?include_groups=appears_on&limit=20`),
-    api(`/artists/${artistId}/related-artists`)
+    api(`/artists/${artistId}/top-tracks?market=from_token`),
+    api(`/artists/${artistId}/albums?limit=50`),
+    api(`/artists/${artistId}/related-artists`).catch(() => null)
   ]);
 
   if (!artist) return null;
@@ -611,15 +609,15 @@ async function fetchArtist(artistId) {
       contextUri: t.album?.uri || '',
       durationMs: t.duration_ms
     })),
-    albums: (albumsData?.items || []).map(a => ({
+    albums: (albumsData?.items || []).filter(a => a.album_type === 'album').slice(0, 20).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
       year: a.release_date?.substring(0, 4) || '', type: 'album'
     })),
-    singles: (singlesData?.items || []).map(a => ({
+    singles: (albumsData?.items || []).filter(a => a.album_type === 'single').slice(0, 20).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
       year: a.release_date?.substring(0, 4) || '', type: 'single'
     })),
-    appearsOn: (appearsOn?.items || []).map(a => ({
+    appearsOn: (albumsData?.items || []).filter(a => a.album_group === 'appears_on').slice(0, 20).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
       year: a.release_date?.substring(0, 4) || '', type: 'appears_on'
     })),
