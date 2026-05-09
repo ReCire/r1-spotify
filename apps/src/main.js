@@ -372,7 +372,7 @@ async function playContext(contextUri, offset = 0) {
     showToast('Connecting…', 'info');
     return;
   }
-  await api('/me/player/play', {
+  await api(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',
     body: JSON.stringify({
       context_uri: contextUri,
@@ -387,13 +387,17 @@ async function playTrackInContext(contextUri, trackUri) {
     showToast('Connecting…', 'info');
     return;
   }
-  await api('/me/player/play', {
+  const body = {};
+  if (contextUri && !contextUri.startsWith('spotify:track:')) {
+    body.context_uri = contextUri;
+    body.offset = { uri: trackUri };
+  } else {
+    body.uris = [trackUri];
+  }
+  body.position_ms = 0;
+  await api(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',
-    body: JSON.stringify({
-      context_uri: contextUri,
-      offset: { uri: trackUri },
-      position_ms: 0
-    })
+    body: JSON.stringify(body)
   });
 }
 
@@ -451,12 +455,14 @@ async function fetchPlaylistTracks(playlistId) {
 
 async function fetchHomeSections() {
   try {
-    const [recentData, topTracksShort, topTracksLong, topArtistsData, savedAlbums] = await Promise.all([
+    const [recentData, topTracksShort, topTracksLong, topArtistsData, savedAlbums, showsData, audiobooksData] = await Promise.all([
       api('/me/player/recently-played?limit=6'),
       api('/me/top/tracks?time_range=short_term&limit=6'),
       api('/me/top/tracks?time_range=long_term&limit=6'),
       api('/me/top/artists?time_range=medium_term&limit=6'),
-      api('/me/albums?limit=6')
+      api('/me/albums?limit=6'),
+      api('/me/shows?limit=6'),
+      api('/me/audiobooks?limit=6')
     ]);
 
     homeSections = [];
@@ -511,19 +517,53 @@ async function fetchHomeSections() {
       });
     }
 
+    if (showsData?.items?.length) {
+      const img = showsData.items[0]?.show?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Your Podcasts', 
+        image: img,
+        categoryType: 'podcasts',
+        contentType: 'podcasts'
+      });
+    }
+
+    if (audiobooksData?.items?.length) {
+      const img = audiobooksData.items[0]?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Your Audiobooks', 
+        image: img,
+        categoryType: 'audiobooks',
+        contentType: 'audiobooks'
+      });
+    }
+
     if (playlists.length) {
       const madeForYou = playlists.filter(p => 
         p.owner === 'Spotify' || 
         p.name.toLowerCase().includes('daily mix') ||
         p.name.toLowerCase().includes('discover') ||
         p.name.toLowerCase().includes('release radar') ||
-        p.name.toLowerCase().includes('repeat')
+        p.name.toLowerCase().includes('repeat') ||
+        p.name.toLowerCase().includes('on repeat') ||
+        p.name.toLowerCase().includes('time capsule')
       );
       if (madeForYou.length) {
         homeSections.push({
           title: 'Made For You',
           image: madeForYou[0]?.image || '',
           categoryType: 'made-for-you',
+          contentType: 'music'
+        });
+      }
+
+      const dailyMixes = playlists.filter(p => 
+        p.name.toLowerCase().includes('daily mix')
+      );
+      if (dailyMixes.length) {
+        homeSections.push({
+          title: 'Daily Mixes',
+          image: dailyMixes[0]?.image || '',
+          categoryType: 'daily-mixes',
           contentType: 'music'
         });
       }
@@ -970,6 +1010,47 @@ async function fetchSectionItems(categoryType) {
             id: item.album.id
           }));
         }
+        break;
+
+      case 'podcasts':
+        data = await api('/me/shows?limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(item => ({
+            name: item.show.name,
+            artist: item.show.publisher || '',
+            image: item.show.images?.[0]?.url || '',
+            type: 'show',
+            uri: item.show.uri,
+            id: item.show.id
+          }));
+        }
+        break;
+
+      case 'audiobooks':
+        data = await api('/me/audiobooks?limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(item => ({
+            name: item.name,
+            artist: item.authors?.[0]?.name || '',
+            image: item.images?.[0]?.url || '',
+            type: 'audiobook',
+            uri: item.uri,
+            id: item.id
+          }));
+        }
+        break;
+
+      case 'daily-mixes':
+        currentSection.items = playlists.filter(p => 
+          p.name.toLowerCase().includes('daily mix')
+        ).map(p => ({
+          name: p.name,
+          artist: 'Spotify',
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }));
         break;
 
       case 'library':
