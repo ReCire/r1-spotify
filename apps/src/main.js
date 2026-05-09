@@ -42,6 +42,8 @@ let progressInterval = null;
 let viewStack = [];
 let homeSections = [];
 let homeFilter = 'all';
+let sectionFilter = 'all';
+let discographyFilter = 'all';
 let artistData = null;
 let artistDiscography = null;
 let albumTracks = [];
@@ -582,10 +584,12 @@ async function fetchHomeSections() {
 }
 
 async function fetchArtist(artistId) {
-  const [artist, topTracks, albums, related] = await Promise.all([
+  const [artist, topTracks, albumsData, singlesData, appearsOn, related] = await Promise.all([
     api(`/artists/${artistId}`),
-    api(`/artists/${artistId}/top-tracks`),
-    api(`/artists/${artistId}/albums?include_groups=album,single&limit=20`),
+    api(`/artists/${artistId}/top-tracks?market=US`),
+    api(`/artists/${artistId}/albums?include_groups=album&limit=20`),
+    api(`/artists/${artistId}/albums?include_groups=single&limit=20`),
+    api(`/artists/${artistId}/albums?include_groups=appears_on&limit=20`),
     api(`/artists/${artistId}/related-artists`)
   ]);
 
@@ -607,15 +611,19 @@ async function fetchArtist(artistId) {
       contextUri: t.album?.uri || '',
       durationMs: t.duration_ms
     })),
-    albums: (albums?.items || []).filter(a => a.album_group === 'album').slice(0, 10).map(a => ({
+    albums: (albumsData?.items || []).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: a.album_type
+      year: a.release_date?.substring(0, 4) || '', type: 'album'
     })),
-    singles: (albums?.items || []).filter(a => a.album_group === 'single').slice(0, 10).map(a => ({
+    singles: (singlesData?.items || []).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
       year: a.release_date?.substring(0, 4) || '', type: 'single'
     })),
-    related: (related?.artists || []).slice(0, 6).map(a => ({
+    appearsOn: (appearsOn?.items || []).map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
+      year: a.release_date?.substring(0, 4) || '', type: 'appears_on'
+    })),
+    related: (related?.artists || []).slice(0, 10).map(a => ({
       id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
       followers: a.followers?.total || 0
     }))
@@ -848,17 +856,39 @@ let currentSection = null;
 function renderSection(app) {
   if (!currentSection) { goBack(); return; }
 
-  const header = createHeader(currentSection.title, false);
+  const header = createHeader(currentSection.title, true);
   app.appendChild(header);
+
+  if (currentSection.hasFilters && currentSection.filterOptions) {
+    const filterBar = document.createElement('div');
+    filterBar.className = 'filter-bar';
+    currentSection.filterOptions.forEach(f => {
+      const btn = document.createElement('button');
+      btn.className = `filter-btn ${sectionFilter === f ? 'active' : ''}`;
+      btn.textContent = capitalize(f);
+      btn.addEventListener('click', () => {
+        sectionFilter = f;
+        scrollIndex = 0;
+        render();
+      });
+      filterBar.appendChild(btn);
+    });
+    app.appendChild(filterBar);
+  }
 
   const container = document.createElement('div');
   container.className = 'list-container';
   container.id = 'list-container';
 
-  if (currentSection.items.length === 0) {
+  let items = currentSection.items;
+  if (currentSection.hasFilters && sectionFilter !== 'all') {
+    items = items.filter(item => item.filterType === sectionFilter);
+  }
+
+  if (items.length === 0) {
     container.innerHTML = `<div class="empty-state">Loading…</div>`;
   } else {
-    currentSection.items.forEach((item, i) => {
+    items.forEach((item, i) => {
       const card = document.createElement('div');
       card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
       card.dataset.idx = i;
@@ -1053,16 +1083,42 @@ async function fetchSectionItems(categoryType) {
         }));
         break;
 
-      case 'library':
-        currentSection.items = playlists.map(p => ({
-          name: p.name,
-          artist: `${p.trackCount || 0} tracks`,
-          image: p.image,
-          type: 'playlist',
-          uri: p.uri,
-          id: p.id
-        }));
+      case 'library': {
+        const [libAlbums, libArtists, libShows] = await Promise.all([
+          api('/me/albums?limit=50'),
+          api('/me/following?type=artist&limit=50'),
+          api('/me/shows?limit=50')
+        ]);
+        let allItems = [];
+        allItems.push(...playlists.map(p => ({
+          name: p.name, artist: `${p.trackCount || 0} tracks`, image: p.image,
+          type: 'playlist', uri: p.uri, id: p.id, filterType: 'playlists'
+        })));
+        if (libAlbums?.items) {
+          allItems.push(...libAlbums.items.map(item => ({
+            name: item.album.name, artist: item.album.artists?.[0]?.name || '',
+            image: item.album.images?.[0]?.url || '', type: 'album',
+            uri: item.album.uri, id: item.album.id, filterType: 'albums'
+          })));
+        }
+        if (libArtists?.artists?.items) {
+          allItems.push(...libArtists.artists.items.map(a => ({
+            name: a.name, artist: '', image: a.images?.[0]?.url || '',
+            type: 'artist', uri: a.uri, id: a.id, filterType: 'artists'
+          })));
+        }
+        if (libShows?.items) {
+          allItems.push(...libShows.items.map(item => ({
+            name: item.show.name, artist: item.show.publisher || '',
+            image: item.show.images?.[0]?.url || '', type: 'show',
+            uri: item.show.uri, id: item.show.id, filterType: 'podcasts'
+          })));
+        }
+        currentSection.items = allItems;
+        currentSection.hasFilters = true;
+        currentSection.filterOptions = ['all', 'playlists', 'albums', 'artists', 'podcasts'];
         break;
+      }
 
       default:
         currentSection.items = [];
@@ -1215,8 +1271,24 @@ function renderArtist(app) {
 function renderDiscography(app) {
   if (!artistData) { goBack(); return; }
 
-  const header = createHeader(truncate(artistData.name, 16), false);
+  const header = createHeader(truncate(artistData.name, 16), true);
   app.appendChild(header);
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
+  filters.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = `filter-btn ${discographyFilter === f ? 'active' : ''}`;
+    btn.textContent = capitalize(f);
+    btn.addEventListener('click', () => {
+      discographyFilter = f;
+      scrollIndex = 0;
+      render();
+    });
+    filterBar.appendChild(btn);
+  });
+  app.appendChild(filterBar);
 
   const container = document.createElement('div');
   container.className = 'list-container';
@@ -1224,34 +1296,54 @@ function renderDiscography(app) {
 
   let allItems = [];
 
-  // Popular tracks
-  artistData.topTracks.forEach(t => {
-    allItems.push({ name: t.name, subtitle: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri });
-  });
-  // Albums
-  artistData.albums.forEach(a => {
-    allItems.push({ name: a.name, subtitle: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri });
-  });
-  // Singles
-  artistData.singles.forEach(a => {
-    allItems.push({ name: a.name, subtitle: a.year + ' · Single', image: a.image, type: 'album', id: a.id, uri: a.uri });
-  });
-  // Related
-  artistData.related.forEach(a => {
-    allItems.push({ name: a.name, subtitle: 'Artist', image: a.image, type: 'artist', id: a.id, uri: a.uri });
-  });
+  if (discographyFilter === 'all' || discographyFilter === 'popular') {
+    artistData.topTracks.forEach(t => {
+      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
+    });
+  }
+  if (discographyFilter === 'all' || discographyFilter === 'albums') {
+    artistData.albums.forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
+    });
+  }
+  if (discographyFilter === 'all' || discographyFilter === 'singles') {
+    artistData.singles.forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
+    });
+  }
+  if (discographyFilter === 'all' || discographyFilter === 'appears on') {
+    (artistData.appearsOn || []).forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
+    });
+  }
+  if (discographyFilter === 'all' || discographyFilter === 'related') {
+    artistData.related.forEach(a => {
+      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
+    });
+  }
 
   allItems.forEach((item, i) => {
     const card = document.createElement('div');
     card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
     card.dataset.idx = i;
     card.style.backgroundImage = `url('${item.image}')`;
+
+    let typeLabel = capitalize(item.type);
+    let sublabel = '';
+    if (item.type === 'artist') {
+      sublabel = '';
+    } else if (item.artist) {
+      sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
+    } else {
+      sublabel = `<span>${typeLabel}</span>`;
+    }
+
     card.innerHTML = `
       <div class="content-card-overlay"></div>
       <div class="content-card-content">
         <div class="content-card-labels">
           <div class="content-card-name">${truncate(item.name, 26)}</div>
-          <div class="content-card-sub">${item.subtitle ? `<span>${item.type === 'track' ? 'Song' : item.type === 'album' ? 'Album' : 'Artist'}</span><span class="dot">·</span><span>${truncate(item.subtitle, 18)}</span>` : `<span>${item.type === 'track' ? 'Song' : item.type === 'album' ? 'Album' : 'Artist'}</span>`}</div>
+          ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
         </div>
         ${chevronRight()}
       </div>
@@ -1534,14 +1626,30 @@ function scrollFocusedIntoView() {
 }
 
 function getListLength() {
-  if (currentView === 'home') return homeSections.length;
-  if (currentView === 'section') return currentSection ? currentSection.items.length : 0;
+  if (currentView === 'home') {
+    const filtered = homeFilter === 'all' ? homeSections : homeSections.filter(s => s.contentType === homeFilter);
+    return filtered.length;
+  }
+  if (currentView === 'section') {
+    if (!currentSection) return 0;
+    let items = currentSection.items;
+    if (currentSection.hasFilters && sectionFilter !== 'all') {
+      items = items.filter(item => item.filterType === sectionFilter);
+    }
+    return items.length;
+  }
   if (currentView === 'playlist') return playlistTracks.length;
   if (currentView === 'album') return albumTracks.length;
   if (currentView === 'search') return searchResults.length;
   if (currentView === 'discography') {
     if (!artistData) return 0;
-    return artistData.topTracks.length + artistData.albums.length + artistData.singles.length + artistData.related.length;
+    let count = 0;
+    if (discographyFilter === 'all' || discographyFilter === 'popular') count += artistData.topTracks.length;
+    if (discographyFilter === 'all' || discographyFilter === 'albums') count += artistData.albums.length;
+    if (discographyFilter === 'all' || discographyFilter === 'singles') count += artistData.singles.length;
+    if (discographyFilter === 'all' || discographyFilter === 'appears on') count += (artistData.appearsOn || []).length;
+    if (discographyFilter === 'all' || discographyFilter === 'related') count += artistData.related.length;
+    return count;
   }
   return 0;
 }
