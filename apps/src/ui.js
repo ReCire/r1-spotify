@@ -807,6 +807,41 @@ export function triggerHaptic() {
   }
 }
 
+export function updateProgressBar() {
+  const bar = document.querySelector('.progress-fill');
+  if (bar && state.durationMs > 0) {
+    bar.style.width = `${(state.progressMs / state.durationMs) * 100}%`;
+  }
+  const timeEl = document.querySelector('.track-time');
+  if (timeEl) {
+    timeEl.textContent = `${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}`;
+  }
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+let volumeToastTimeout = null;
+export function showVolumeToast() {
+  let toast = document.querySelector('.volume-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'volume-toast';
+    document.getElementById('app').appendChild(toast);
+  }
+  toast.innerHTML = `
+    <div class="vol-track-sm"><div class="vol-fill-sm" style="width:${state.volume * 100}%"></div></div>
+    <span class="vol-pct-sm">${Math.round(state.volume * 100)}%</span>
+  `;
+  toast.classList.add('visible');
+
+  if (volumeToastTimeout) clearTimeout(volumeToastTimeout);
+  volumeToastTimeout = setTimeout(() => toast.classList.remove('visible'), 1200);
+}
+
 function formatFollowers(n) {
   if (!n || n === 0) return '';
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';

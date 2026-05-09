@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { loadToken, refreshToken, startAuth, handleCallback, loadVolume } from './auth.js';
 import { fetchPlaylists, fetchHomeSections, initPlayer, togglePlayback, nextTrack, prevTrack, adjustVolume } from './api.js';
-import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding, updateNowPlaying, triggerHaptic } from './ui.js';
+import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding, updateNowPlaying, updateProgressBar, showVolumeToast, triggerHaptic } from './ui.js';
 
 // ============ R1 Hardware Events ============
 
@@ -58,6 +58,14 @@ window.addEventListener('playerStateChanged', () => {
 
 window.addEventListener('authError', () => {
   render(); // Re-render to show the login view safely
+});
+
+window.addEventListener('progressTick', () => {
+  updateProgressBar();
+});
+
+window.addEventListener('volumeChanged', () => {
+  showVolumeToast();
 });
 
 // ============ Touch & Wheel Scroll ============
