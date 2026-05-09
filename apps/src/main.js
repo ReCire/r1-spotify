@@ -422,23 +422,27 @@ async function fetchPlaylists() {
 
 async function fetchPlaylistTracks(playlistId) {
   try {
-    const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
+    if (Date.now() >= tokenExpiry - 60000) {
+      await refreshToken();
+    }
+    const data = await api(`/playlists/${playlistId}/tracks?limit=100&market=from_token`);
     if (data && data.items) {
-    playlistTracks = data.items
-      .filter(item => item.track && item.track.uri)
-      .map(item => ({
-        name: item.track.name,
-        artist: item.track.artists?.map(a => a.name).join(', ') || '',
-        album: item.track.album?.name || '',
-        artwork: item.track.album?.images?.[0]?.url || '',
-        uri: item.track.uri,
-        durationMs: item.track.duration_ms
-      }));
+      playlistTracks = data.items
+        .filter(item => item.track && item.track.uri)
+        .map(item => ({
+          name: item.track.name,
+          artist: item.track.artists?.map(a => a.name).join(', ') || '',
+          album: item.track.album?.name || '',
+          artwork: item.track.album?.images?.[0]?.url || '',
+          uri: item.track.uri,
+          durationMs: item.track.duration_ms
+        }));
     } else {
       playlistTracks = [];
     }
   } catch (err) {
     console.error('Fetch playlist tracks error:', err);
+    showToast('Unable to load playlist. It may be private.', 'error');
     playlistTracks = [];
   }
 }
