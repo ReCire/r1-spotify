@@ -1597,24 +1597,24 @@ async function openAlbum(albumId) {
 // ============ List Scroll Management ============
 
 function scrollFocusedIntoView() {
+  updateFocusedCard();
+  
   const container = document.getElementById('list-container');
   if (!container) return;
 
   const items = container.querySelectorAll('.cat-card, .content-card');
-  items.forEach(item => {
-    const idx = parseInt(item.dataset.idx);
-    item.classList.toggle('focused', idx === scrollIndex);
-  });
-
-  const focused = container.querySelector('.focused');
-  if (focused) {
-    const containerRect = container.getBoundingClientRect();
-    const itemRect = focused.getBoundingClientRect();
-    if (itemRect.bottom > containerRect.bottom) {
-      focused.scrollIntoView({ block: 'end', behavior: 'smooth' });
-    } else if (itemRect.top < containerRect.top) {
-      focused.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    }
+  const stickyIndex = 2;
+  const cardHeight = items[0]?.offsetHeight || 44;
+  
+  // Scroll to position the focused item at the sticky index
+  if (scrollIndex >= stickyIndex && scrollIndex < items.length - stickyIndex) {
+    const targetScrollTop = (scrollIndex - stickyIndex) * cardHeight;
+    container.scrollTop = targetScrollTop;
+  } else if (scrollIndex < stickyIndex) {
+    container.scrollTop = 0;
+  } else {
+    // Near the bottom, scroll to end
+    container.scrollTop = container.scrollHeight;
   }
 }
 
@@ -1775,9 +1775,52 @@ function handleScroll(dir) {
   } else {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
-    scrollIndex = Math.max(0, Math.min(maxIdx, scrollIndex + dir));
-    scrollFocusedIntoView();
+    
+    const container = document.getElementById('list-container');
+    if (!container) return;
+    
+    const stickyIndex = 2; // Selection stays at this index in viewport
+    const items = container.querySelectorAll('.cat-card, .content-card');
+    if (items.length === 0) return;
+    
+    const cardHeight = items[0]?.offsetHeight || 44;
+    
+    // If at the top and scrolling down, move selection to sticky position
+    if (scrollIndex === 0 && dir === 1) {
+      scrollIndex = stickyIndex;
+      updateFocusedCard();
+      return;
+    }
+    // If at bottom and scrolling up, move selection up
+    if (scrollIndex === maxIdx && dir === -1) {
+      scrollIndex = maxIdx - stickyIndex;
+      updateFocusedCard();
+      return;
+    }
+    
+    // Scroll the container
+    container.scrollTop += dir * cardHeight;
+    
+    // Update which item appears at sticky position based on scroll
+    const scrollTop = container.scrollTop;
+    const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(scrollTop / cardHeight) + stickyIndex));
+    
+    if (newIndex !== scrollIndex && newIndex >= 0 && newIndex <= maxIdx) {
+      scrollIndex = newIndex;
+      updateFocusedCard();
+    }
   }
+}
+
+function updateFocusedCard() {
+  const items = document.querySelectorAll('.cat-card, .content-card');
+  items.forEach((item, i) => {
+    if (i === scrollIndex) {
+      item.classList.add('focused');
+    } else {
+      item.classList.remove('focused');
+    }
+  });
 }
 
 window.addEventListener('sideClick', () => {

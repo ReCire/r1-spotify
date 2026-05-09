@@ -616,7 +616,7 @@ html, body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-bottom: 50px;
+  padding-bottom: 60px;
 }
 
 /* ========== Now Playing View ========== */
