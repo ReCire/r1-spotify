@@ -18,7 +18,6 @@ export function render() {
     case 'nowplaying': renderNowPlaying(app); break;
     case 'search': renderSearch(app); break;
     case 'artist': renderArtist(app); break;
-    case 'discography': renderDiscography(app); break;
   }
 }
 
@@ -329,24 +328,93 @@ function renderArtist(app) {
   `;
   container.appendChild(heroCard);
 
-  // Subsequent Cards for Discography
-  let idx = 1;
-  const sections = [
-    { title: 'Top Tracks', filter: 'popular', count: state.artistData.topTracks.length },
-    { title: 'Albums', filter: 'albums', count: state.artistData.albums.length },
-    { title: 'Singles', filter: 'singles', count: state.artistData.singles.length }
-  ].filter(s => s.count > 0);
-
-  sections.forEach((sec) => {
-    const card = document.createElement('div');
-    card.className = `cat-card ${idx === state.scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = idx;
-    card.style.background = '#282828';
-    card.innerHTML = `<div class="cat-card-content"><span class="cat-card-title">${sec.title}</span>${chevronRight()}</div>`;
-    card.addEventListener('click', () => { state.discographyFilter = sec.filter; navigate('discography'); });
-    container.appendChild(card);
-    idx++;
+  // Filter bar (not a scroll index item)
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
+  const a = state.artistData;
+  const hasContent = {
+    all: true,
+    popular: (a.topTracks || []).length > 0,
+    albums: (a.albums || []).length > 0,
+    singles: (a.singles || []).length > 0,
+    'appears on': (a.appearsOn || []).length > 0,
+    related: (a.related || []).length > 0
+  };
+  filters.filter(f => hasContent[f]).forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
+    btn.textContent = capitalize(f);
+    btn.addEventListener('click', () => {
+      state.discographyFilter = f;
+      state.scrollIndex = 0;
+      render();
+    });
+    filterBar.appendChild(btn);
   });
+  container.appendChild(filterBar);
+
+  // Content cards (idx 1+)
+  let allItems = [];
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') {
+    (a.topTracks || []).forEach(t => {
+      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
+    (a.albums || []).forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
+    (a.singles || []).forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') {
+    (a.appearsOn || []).forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'related') {
+    (a.related || []).forEach(a => {
+      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
+    });
+  }
+
+  if (allItems.length === 0) {
+    container.innerHTML += `<div class="empty-state">No content</div>`;
+  } else {
+    allItems.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i + 1 === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i + 1;
+      card.style.backgroundImage = `url('${item.image}')`;
+
+      let typeLabel = capitalize(item.type);
+      let sublabel = '';
+      if (item.type === 'artist') {
+        sublabel = '';
+      } else if (item.artist) {
+        sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
+      } else {
+        sublabel = `<span>${typeLabel}</span>`;
+      }
+
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(item.name, 26)}</div>
+            ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => handleContentCardClick(item));
+      container.appendChild(card);
+    });
+  }
 
   app.appendChild(container);
 
@@ -358,98 +426,6 @@ function renderArtist(app) {
     });
   }, 0);
 
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-// ============ Discography View (Content Cards) ============
-
-function renderDiscography(app) {
-  if (!state.artistData) { goBack(); return; }
-
-  const header = createHeader(truncate(state.artistData.name, 16), true);
-  app.appendChild(header);
-
-  const filterBar = document.createElement('div');
-  filterBar.className = 'filter-bar';
-  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
-  filters.forEach(f => {
-    const btn = document.createElement('button');
-    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
-    btn.textContent = capitalize(f);
-    btn.addEventListener('click', () => {
-      state.discographyFilter = f;
-      state.scrollIndex = 0;
-      render();
-    });
-    filterBar.appendChild(btn);
-  });
-  app.appendChild(filterBar);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  let allItems = [];
-
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') {
-    state.artistData.topTracks.forEach(t => {
-      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
-    state.artistData.albums.forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
-    state.artistData.singles.forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') {
-    (state.artistData.appearsOn || []).forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'related') {
-    state.artistData.related.forEach(a => {
-      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
-    });
-  }
-
-  allItems.forEach((item, i) => {
-    const card = document.createElement('div');
-    card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = i;
-    card.style.backgroundImage = `url('${item.image}')`;
-
-    let typeLabel = capitalize(item.type);
-    let sublabel = '';
-    if (item.type === 'artist') {
-      sublabel = '';
-    } else if (item.artist) {
-      sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
-    } else {
-      sublabel = `<span>${typeLabel}</span>`;
-    }
-
-    card.innerHTML = `
-      <div class="content-card-overlay"></div>
-      <div class="content-card-content">
-        <div class="content-card-labels">
-          <div class="content-card-name">${truncate(item.name, 26)}</div>
-          ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
-        </div>
-        ${chevronRight()}
-      </div>
-    `;
-    card.addEventListener('click', () => handleContentCardClick(item));
-    container.appendChild(card);
-  });
-
-  app.appendChild(container);
   if (state.currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
@@ -710,6 +686,7 @@ async function openPlaylistById(id, name, uri) {
 
 async function openArtist(artistId) {
   state.artistData = null;
+  state.discographyFilter = 'all';
   navigate('artist');
   await fetchArtist(artistId);
   if (state.currentView === 'artist') render();
@@ -764,10 +741,15 @@ export function getListLength() {
   if (state.currentView === 'album') return state.albumTracks.length;
   if (state.currentView === 'search') return state.searchResults.length;
   if (state.currentView === 'artist') {
-    let count = 1; // Hero card
-    if (state.artistData?.topTracks.length) count++;
-    if (state.artistData?.albums.length) count++;
-    if (state.artistData?.singles.length) count++;
+    if (!state.artistData) return 0;
+    let count = 1; // hero card
+    const d = state.discographyFilter;
+    const a = state.artistData;
+    if (d === 'all' || d === 'popular') count += (a.topTracks || []).length;
+    if (d === 'all' || d === 'albums') count += (a.albums || []).length;
+    if (d === 'all' || d === 'singles') count += (a.singles || []).length;
+    if (d === 'all' || d === 'appears on') count += (a.appearsOn || []).length;
+    if (d === 'all' || d === 'related') count += (a.related || []).length;
     return count;
   }
   if (state.currentView === 'discography') {

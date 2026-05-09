@@ -40,7 +40,8 @@ window.addEventListener('sideClick', () => {
   } else if (state.currentView === 'nowplaying') {
     togglePlayback();
   } else if (state.currentView === 'artist') {
-    navigate('discography');
+    const focused = document.querySelector('.artist-hero-card.focused, .content-card.focused');
+    if (focused) focused.click();
   } else {
     const focused = document.querySelector('.cat-card.focused, .content-card.focused');
     if (focused) focused.click();
