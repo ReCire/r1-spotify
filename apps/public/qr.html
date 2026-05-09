@@ -6,20 +6,15 @@
   <title>Spotify R1 - Install QR Code</title>
   <script src="https://unpkg.com/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
   <style>
-    body { font-family: -apple-system, sans-serif; background: #1DB954; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; position: relative; }
-    .logo-top-left { position: absolute; top: 24px; left: 24px; width: 48px; height: 48px; background: rgba(128, 128, 128, 0.3); border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-    .logo-top-left img { width: 32px; height: 32px; }
+    body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
     h1 { font-size: 24px; margin-bottom: 8px; }
-    p { color: #fff; margin-bottom: 24px; font-size: 14px; opacity: 0.9; }
+    p { color: #b3b3b3; margin-bottom: 24px; font-size: 14px; }
     #qr { margin-bottom: 24px; }
-    .url { font-size: 12px; color: #fff; word-break: break-all; max-width: 400px; text-align: center; opacity: 0.9; }
-    .instructions { margin-top: 24px; font-size: 13px; color: #fff; max-width: 400px; text-align: center; line-height: 1.6; opacity: 0.9; }
+    .url { font-size: 12px; color: #1DB954; word-break: break-all; max-width: 400px; text-align: center; }
+    .instructions { margin-top: 24px; font-size: 13px; color: #b3b3b3; max-width: 400px; text-align: center; line-height: 1.6; }
   </style>
 </head>
 <body>
-  <div class="logo-top-left">
-    <img src="icon.svg" alt="Spotify">
-  </div>
   <h1>Spotify for R1</h1>
   <p>Scan this QR code with your Rabbit R1 to install</p>
   <div id="qr"></div>
@@ -33,7 +28,7 @@
       title: "Spotify",
       url: "https://r1-spotify.vercel.app",
       description: "Spotify player for Rabbit R1",
-      iconUrl: "https://r1-spotify.vercel.app/icon.svg",
+      iconUrl: "https://r1-spotify.vercel.app/icon.png",
       themeColor: "#1DB954"
     };
 
@@ -48,15 +43,9 @@
       margin: 10,
       qrOptions: { typeNumber: 0, mode: "Byte", errorCorrectionLevel: "L" },
       dotsOptions: { color: "#ffffff", type: "rounded" },
-      backgroundOptions: { color: "#1DB954" },
-      cornersSquareOptions: { color: "#ffffff", type: "extra-rounded" },
-      cornersDotOptions: { color: "#ffffff", type: "dot" },
-      imageOptions: {
-        crossOrigin: "anonymous",
-        margin: 8,
-        imageSize: 0.25,
-        src: "https://r1-spotify.vercel.app/icon.svg"
-      }
+      backgroundOptions: { color: "#121212" },
+      cornersSquareOptions: { color: "#1DB954", type: "extra-rounded" },
+      cornersDotOptions: { color: "#1DB954", type: "dot" }
     });
 
     qr.append(document.getElementById('qr'));

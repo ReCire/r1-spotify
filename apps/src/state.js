@@ -47,6 +47,7 @@ export const state = {
   discographyFilter: 'all',
   artistData: null,
   artistDiscography: null,
+  artistIsFollowed: false,
   albumTracks: [],
   selectedAlbum: null,
   onboardingShown: false,

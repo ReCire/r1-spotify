@@ -366,25 +366,39 @@ export async function fetchHomeSections() {
   }
 }
 
-export async function fetchArtist(artistId) {
-  const [artist, topTracks, albumsData, related] = await Promise.all([
-    api(`/artists/${artistId}`),
-    api(`/artists/${artistId}/top-tracks?market=from_token`),
-    api(`/artists/${artistId}/albums?limit=50`),
-    api(`/artists/${artistId}/related-artists`).catch(() => null)
-  ]);
+export async function toggleFollowArtist(artistId, isCurrentlyFollowed) {
+  const method = isCurrentlyFollowed ? 'DELETE' : 'PUT';
+  await api(`/me/following?type=artist&ids=${artistId}`, { method });
+  state.artistIsFollowed = !isCurrentlyFollowed;
+}
 
+export async function fetchArtist(artistId) {
+  // 1. Get base info & Follow state (still allowed)
+  const [artist, followRes] = await Promise.all([
+    api(`/artists/${artistId}`),
+    api(`/me/following/contains?type=artist&ids=${artistId}`)
+  ]);
   if (!artist) return null;
+  state.artistIsFollowed = followRes ? followRes[0] : false;
+
+  // 2. BACKDOOR: Use Search to get tracks and albums, bypassing the 403/400 restrictions!
+  const query = encodeURIComponent(`artist:"${artist.name}"`);
+  const searchRes = await api(`/search?q=${query}&type=track,album&limit=50`);
+  
+  const tracks = searchRes?.tracks?.items || [];
+  const albumsList = searchRes?.albums?.items || [];
+
+  // Filter to ensure exact artist match
+  const topTracks = tracks.filter(t => t.artists.some(a => a.id === artistId)).slice(0, 5);
+  const exactAlbums = albumsList.filter(a => a.artists.some(a => a.id === artistId));
 
   state.artistData = {
     id: artist.id,
     name: artist.name,
     image: artist.images?.[0]?.url || '',
     followers: artist.followers?.total || 0,
-    genres: artist.genres || [],
-    popularity: artist.popularity || 0,
     uri: artist.uri,
-    topTracks: (topTracks?.tracks || []).slice(0, 5).map(t => ({
+    topTracks: topTracks.map(t => ({
       name: t.name,
       artist: t.artists?.map(a => a.name).join(', ') || '',
       artwork: t.album?.images?.[0]?.url || '',
@@ -392,21 +406,11 @@ export async function fetchArtist(artistId) {
       contextUri: t.album?.uri || '',
       durationMs: t.duration_ms
     })),
-    albums: (albumsData?.items || []).filter(a => a.album_type === 'album').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'album'
+    albums: exactAlbums.filter(a => a.album_type === 'album').map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'album'
     })),
-    singles: (albumsData?.items || []).filter(a => a.album_type === 'single').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'single'
-    })),
-    appearsOn: (albumsData?.items || []).filter(a => a.album_group === 'appears_on').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'appears_on'
-    })),
-    related: (related?.artists || []).slice(0, 10).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      followers: a.followers?.total || 0
+    singles: exactAlbums.filter(a => a.album_type === 'single').map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'single'
     }))
   };
   return state.artistData;

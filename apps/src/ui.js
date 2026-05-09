@@ -1,7 +1,7 @@
 // Spotify R1 Player - UI Rendering
 import { state } from './state.js';
 import { startAuth } from './auth.js';
-import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks, startProgressTimer, togglePlayback, prevTrack, nextTrack, searchSpotify } from './api.js';
+import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks, startProgressTimer, togglePlayback, prevTrack, nextTrack, searchSpotify, toggleFollowArtist } from './api.js';
 
 // ============ Main Render ============
 
@@ -306,29 +306,50 @@ function renderArtist(app) {
   if (!state.artistData) { app.innerHTML = `<div class="empty-state">Loading…</div>`; return; }
 
   const container = document.createElement('div');
-  container.className = 'artist-view';
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
-  container.innerHTML = `
-    <div class="artist-hero" style="background-image:url('${state.artistData.image}')">
-      <div class="artist-hero-overlay">
-        <button class="artist-back" id="artist-back">${chevronLeft()}</button>
-        <div class="artist-hero-bottom">
-          <div class="artist-name">${state.artistData.name}</div>
-          <div class="artist-stats">${formatFollowers(state.artistData.followers)} listeners</div>
-          <div class="artist-actions">
-            <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
-            <button class="artist-follow-btn" id="artist-follow">${followIcon()} Follow</button>
-          </div>
-        </div>
+  // Card 0: Full Screen Hero
+  const heroCard = document.createElement('div');
+  heroCard.className = `artist-hero-card ${state.scrollIndex === 0 ? 'focused' : ''}`;
+  heroCard.dataset.idx = 0;
+  heroCard.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, #121212 100%), url('${state.artistData.image}')`;
+  
+  heroCard.innerHTML = `
+    <button class="artist-back" id="artist-back">${chevronLeft()}</button>
+    <div class="artist-hero-content">
+      <div class="artist-name">${truncate(state.artistData.name, 22)}</div>
+      <div class="artist-stats">${formatFollowers(state.artistData.followers)} followers</div>
+      <div class="artist-actions">
+        <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
+        <button class="artist-follow-btn ${state.artistIsFollowed ? 'following' : ''}" id="artist-follow">
+          ${state.artistIsFollowed ? 'Following' : 'Follow'}
+        </button>
       </div>
     </div>
-    <div class="artist-explore">
-      <div class="artist-expand" id="artist-expand">
-        <span>Discography</span>${chevronDown()}
-      </div>
-    </div>
+    <div class="scroll-down-indicator">${chevronDown()}</div>
   `;
+  container.appendChild(heroCard);
+
+  // Subsequent Cards for Discography
+  let idx = 1;
+  const sections = [
+    { title: 'Top Tracks', filter: 'popular', count: state.artistData.topTracks.length },
+    { title: 'Albums', filter: 'albums', count: state.artistData.albums.length },
+    { title: 'Singles', filter: 'singles', count: state.artistData.singles.length }
+  ].filter(s => s.count > 0);
+
+  sections.forEach((sec) => {
+    const card = document.createElement('div');
+    card.className = `cat-card ${idx === state.scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = idx;
+    card.style.background = '#282828';
+    card.innerHTML = `<div class="cat-card-content"><span class="cat-card-title">${sec.title}</span>${chevronRight()}</div>`;
+    card.addEventListener('click', () => { state.discographyFilter = sec.filter; navigate('discography'); });
+    container.appendChild(card);
+    idx++;
+  });
 
   app.appendChild(container);
 
@@ -336,23 +357,23 @@ function renderArtist(app) {
     document.getElementById('artist-back')?.addEventListener('click', goBack);
     document.getElementById('artist-play')?.addEventListener('click', () => {
       if (state.artistData.topTracks.length) {
-        api('/me/player/play', {
-          method: 'PUT',
-          body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) })
-        });
+        api('/me/player/play', { method: 'PUT', body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) }) });
         navigate('nowplaying');
-      }
+      } else { showToast('No tracks found', 'warning'); }
     });
     document.getElementById('artist-follow')?.addEventListener('click', async () => {
-      await api(`/me/following?type=artist&ids=${state.artistData.id}`, { method: 'PUT' });
-      showToast('Following ' + state.artistData.name, 'info');
-    });
-    document.getElementById('artist-expand')?.addEventListener('click', () => {
-      navigate('discography');
+      await toggleFollowArtist(state.artistData.id, state.artistIsFollowed);
+      const btn = document.getElementById('artist-follow');
+      if (btn) {
+        btn.textContent = state.artistIsFollowed ? 'Following' : 'Follow';
+        btn.classList.toggle('following', state.artistIsFollowed);
+      }
+      showToast(state.artistIsFollowed ? 'Following' : 'Unfollowed', 'info');
     });
   }, 0);
 
   if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
 }
 
 // ============ Discography View (Content Cards) ============
@@ -722,27 +743,22 @@ export function scrollFocusedIntoView() {
   const container = document.getElementById('list-container');
   if (!container) return;
 
-  const items = container.querySelectorAll('.cat-card, .content-card');
+  const items = container.querySelectorAll('.cat-card, .content-card, .artist-hero-card');
   if (items.length === 0) return;
 
-  // Update focused classes
-  items.forEach((item, i) => {
-    item.classList.toggle('focused', i === state.scrollIndex);
-  });
+  items.forEach((item, i) => item.classList.toggle('focused', i === state.scrollIndex));
 
   const focusedItem = items[state.scrollIndex];
   if (!focusedItem) return;
 
-  const cardHeight = focusedItem.offsetHeight || 44;
-  const containerHeight = container.clientHeight; // Accounts for player padding
+  const containerRect = container.getBoundingClientRect();
+  const itemRect = focusedItem.getBoundingClientRect();
+  
+  // Bulletproof calculation for mixed-height cards
+  const itemTop = (itemRect.top - containerRect.top) + container.scrollTop;
+  const targetScroll = itemTop + (itemRect.height / 2) - (containerRect.height / 2);
 
-  // Sticky Middle Logic: Calculate exact scroll needed to center the focused card
-  const targetScroll = (state.scrollIndex * cardHeight) + (cardHeight / 2) - (containerHeight / 2);
-
-  container.scrollTo({
-    top: Math.max(0, targetScroll),
-    behavior: 'smooth'
-  });
+  container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
 }
 
 export function getListLength() {
@@ -761,6 +777,13 @@ export function getListLength() {
   if (state.currentView === 'playlist') return state.playlistTracks.length;
   if (state.currentView === 'album') return state.albumTracks.length;
   if (state.currentView === 'search') return state.searchResults.length;
+  if (state.currentView === 'artist') {
+    let count = 1; // Hero card
+    if (state.artistData?.topTracks.length) count++;
+    if (state.artistData?.albums.length) count++;
+    if (state.artistData?.singles.length) count++;
+    return count;
+  }
   if (state.currentView === 'discography') {
     if (!state.artistData) return 0;
     let count = 0;
