@@ -89,7 +89,6 @@ html, body {
   display: flex;
   gap: 6px;
   padding: 6px 8px;
-  flex-shrink: 0;
   background: #121212;
   overflow-x: auto;
   overflow-y: hidden;
@@ -616,6 +615,9 @@ html, body {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.list-container.with-player {
   padding-bottom: 60px;
 }
 

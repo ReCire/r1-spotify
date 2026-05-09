@@ -816,6 +816,7 @@ function renderHome(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   const filteredSections = homeFilter === 'all' 
@@ -876,6 +877,7 @@ function renderSection(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   let items = currentSection.items;
@@ -1135,6 +1137,7 @@ function renderPlaylist(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   if (playlistTracks.length === 0) {
@@ -1176,6 +1179,7 @@ function renderAlbum(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   if (albumTracks.length === 0) {
@@ -1290,6 +1294,7 @@ function renderDiscography(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   let allItems = [];
@@ -1427,6 +1432,7 @@ function renderSearch(app) {
 
   const container = document.createElement('div');
   container.className = 'list-container';
+  if (currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
   if (searchResults.length === 0) {
@@ -1597,24 +1603,24 @@ async function openAlbum(albumId) {
 // ============ List Scroll Management ============
 
 function scrollFocusedIntoView() {
-  updateFocusedCard();
-  
   const container = document.getElementById('list-container');
   if (!container) return;
 
   const items = container.querySelectorAll('.cat-card, .content-card');
-  const stickyIndex = 2;
-  const cardHeight = items[0]?.offsetHeight || 44;
-  
-  // Scroll to position the focused item at the sticky index
-  if (scrollIndex >= stickyIndex && scrollIndex < items.length - stickyIndex) {
-    const targetScrollTop = (scrollIndex - stickyIndex) * cardHeight;
-    container.scrollTop = targetScrollTop;
-  } else if (scrollIndex < stickyIndex) {
-    container.scrollTop = 0;
-  } else {
-    // Near the bottom, scroll to end
-    container.scrollTop = container.scrollHeight;
+  items.forEach(item => {
+    const idx = parseInt(item.dataset.idx);
+    item.classList.toggle('focused', idx === scrollIndex);
+  });
+
+  const focused = container.querySelector('.focused');
+  if (focused) {
+    const containerRect = container.getBoundingClientRect();
+    const itemRect = focused.getBoundingClientRect();
+    if (itemRect.bottom > containerRect.bottom) {
+      focused.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    } else if (itemRect.top < containerRect.top) {
+      focused.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
   }
 }
 
@@ -1776,41 +1782,9 @@ function handleScroll(dir) {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
     
-    const container = document.getElementById('list-container');
-    if (!container) return;
-    
-    const stickyIndex = 2; // Selection stays at this index in viewport
-    const items = container.querySelectorAll('.cat-card, .content-card');
-    if (items.length === 0) return;
-    
-    const cardHeight = items[0]?.offsetHeight || 44;
-    
-    // Allow normal scrolling near the ends
-    if (scrollIndex < stickyIndex && dir === 1) {
-      // Near top, just increment scrollIndex normally
-      scrollIndex++;
-      updateFocusedCard();
-      return;
-    }
-    if (scrollIndex > maxIdx - stickyIndex && dir === -1) {
-      // Near bottom, just decrement scrollIndex normally
-      scrollIndex--;
-      updateFocusedCard();
-      return;
-    }
-    
-    // Use sticky behavior in the middle
-    const scrollTop = container.scrollTop;
-    container.scrollTop += dir * cardHeight;
-    
-    // Update which item appears at sticky position based on scroll
-    const newScrollTop = container.scrollTop;
-    const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(newScrollTop / cardHeight) + stickyIndex));
-    
-    if (newIndex !== scrollIndex && newIndex >= 0 && newIndex <= maxIdx) {
-      scrollIndex = newIndex;
-      updateFocusedCard();
-    }
+    // Normal scrolling - just increment/decrement scrollIndex
+    scrollIndex = Math.max(0, Math.min(maxIdx, scrollIndex + dir));
+    scrollFocusedIntoView();
   }
 }
 
