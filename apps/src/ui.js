@@ -18,6 +18,7 @@ export function render() {
     case 'nowplaying': renderNowPlaying(app); break;
     case 'search': renderSearch(app); break;
     case 'artist': renderArtist(app); break;
+    case 'popular-tracks': renderPopularTracks(app); break;
     case 'discography': renderDiscography(app); break;
   }
 }
@@ -310,19 +311,20 @@ function renderArtist(app) {
   if (state.currentTrack) container.classList.add('with-player');
   container.id = 'list-container';
 
+  const a = state.artistData;
+
   // Card 0: Full Screen Hero
   const heroCard = document.createElement('div');
   heroCard.className = `artist-hero-card ${state.scrollIndex === 0 ? 'focused' : ''}`;
   heroCard.dataset.idx = 0;
-  heroCard.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, #121212 100%), url('${state.artistData.image}')`;
-  
+  heroCard.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, #121212 100%), url('${a.image}')`;
   heroCard.innerHTML = `
     <button class="artist-back" id="artist-back">${chevronLeft()}</button>
     <div class="artist-hero-content">
-      <div class="artist-name">${truncate(state.artistData.name, 22)}</div>
+      <div class="artist-name">${truncate(a.name, 22)}</div>
       <div class="artist-stats">${
-        (state.artistData.genres || []).length
-          ? state.artistData.genres.slice(0, 2).map(g => capitalize(g)).join(' · ')
+        (a.genres || []).length
+          ? a.genres.slice(0, 2).map(g => capitalize(g)).join(' · ')
           : ''
       }</div>
       <div class="artist-actions">
@@ -333,116 +335,50 @@ function renderArtist(app) {
   `;
   container.appendChild(heroCard);
 
-  // Filter bar (not a scroll index item)
-  const filterBar = document.createElement('div');
-  filterBar.className = 'filter-bar';
-  const filters = ['popular', 'about'];
-  const a = state.artistData;
-  const hasContent = {
-    popular: (a.topTracks || []).length > 0,
-    about: true
-  };
-  filters.filter(f => hasContent[f]).forEach(f => {
-    const btn = document.createElement('button');
-    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
-    btn.textContent = capitalize(f);
-    btn.addEventListener('click', () => {
-      state.discographyFilter = f;
+  let nextIdx = 1;
+
+  // Card 1: Popular Tracks nav card
+  if ((a.topTracks || []).length > 0) {
+    const tracksCard = document.createElement('div');
+    tracksCard.className = `cat-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
+    tracksCard.dataset.idx = nextIdx;
+    tracksCard.style.backgroundImage = `url('${a.topTracks[0].artwork}')`;
+    tracksCard.innerHTML = `
+      <div class="cat-card-overlay"></div>
+      <div class="cat-card-content">
+        <div><span class="cat-card-title">Popular Tracks</span><div class="cat-card-sub">${a.topTracks.length} track${a.topTracks.length !== 1 ? 's' : ''}</div></div>
+        ${chevronRight()}
+      </div>`;
+    tracksCard.addEventListener('click', () => {
       state.scrollIndex = 0;
-      render();
+      navigate('popular-tracks');
     });
-    filterBar.appendChild(btn);
-  });
-  container.appendChild(filterBar);
-
-  let nextIdx = 1; // Start at 1 since hero is 0
-
-  // About card — render when filter is 'about' or 'all'
-  if (state.discographyFilter === 'about' || state.discographyFilter === 'all') {
-    const aboutCard = document.createElement('div');
-    aboutCard.className = `content-card about-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
-    aboutCard.dataset.idx = nextIdx;
-
-    const genres = (state.artistData.genres || []);
-    const popularity = state.artistData.popularity || 0;
-    const genreText = genres.length ? genres.slice(0, 4).map(g => capitalize(g)).join(' · ') : 'No genre data';
-    const popularityBar = `<div class="popularity-bar"><div class="popularity-fill" style="width:${popularity}%"></div></div>`;
-
-    aboutCard.innerHTML = `
-      <div class="content-card-overlay"></div>
-      <div class="content-card-content about-content">
-        <div class="content-card-labels">
-          <div class="content-card-name">About</div>
-          <div class="about-genres">${genreText}</div>
-          <div class="about-popularity">Popularity ${popularityBar}</div>
-        </div>
-      </div>
-    `;
-    container.appendChild(aboutCard);
+    container.appendChild(tracksCard);
     nextIdx++;
   }
 
-  // Content cards (idx 1+)
-  let allItems = [];
-  if (state.discographyFilter === 'popular') {
-    (a.topTracks || []).forEach(t => {
-      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
-    });
-  }
-
-  if (allItems.length === 0) {
-    container.innerHTML += `<div class="empty-state">No content</div>`;
-  } else {
-    allItems.forEach((item, i) => {
-      const card = document.createElement('div');
-      card.className = `content-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = nextIdx;
-      card.style.backgroundImage = `url('${item.image}')`;
-
-      let typeLabel = capitalize(item.type);
-      let sublabel = '';
-      if (item.type === 'artist') {
-        sublabel = '';
-      } else if (item.artist) {
-        sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
-      } else {
-        sublabel = `<span>${typeLabel}</span>`;
-      }
-
-      card.innerHTML = `
-        <div class="content-card-overlay"></div>
-        <div class="content-card-content">
-          <div class="content-card-labels">
-            <div class="content-card-name">${truncate(item.name, 26)}</div>
-            ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
-          </div>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => handleContentCardClick(item));
-      container.appendChild(card);
-      nextIdx++;
-    });
-  }
-
+  // Card 2: Discography nav card
   const discTotal = (a.albums || []).length + (a.singles || []).length;
   if (discTotal > 0) {
-    const discIdx = nextIdx;
+    const discImg = a.albums?.[0]?.image || a.singles?.[0]?.image || '';
     const discCard = document.createElement('div');
-    discCard.className = `cat-card ${discIdx === state.scrollIndex ? 'focused' : ''}`;
-    discCard.dataset.idx = discIdx;
-    discCard.style.background = '#282828';
-    discCard.innerHTML = `<div class="cat-card-content">
-      <span class="cat-card-title">Discography</span>
-      <span class="cat-card-sub">${discTotal} release${discTotal !== 1 ? 's' : ''}</span>
-      ${chevronRight()}
-    </div>`;
+    discCard.className = `cat-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
+    discCard.dataset.idx = nextIdx;
+    if (discImg) discCard.style.backgroundImage = `url('${discImg}')`;
+    else discCard.style.background = '#282828';
+    discCard.innerHTML = `
+      <div class="cat-card-overlay"></div>
+      <div class="cat-card-content">
+        <div><span class="cat-card-title">Discography</span><div class="cat-card-sub">${discTotal} release${discTotal !== 1 ? 's' : ''}</div></div>
+        ${chevronRight()}
+      </div>`;
     discCard.addEventListener('click', () => {
       state.discographyFilter = 'all';
       state.scrollIndex = 0;
       navigate('discography');
     });
     container.appendChild(discCard);
+    nextIdx++;
   }
 
   app.appendChild(container);
@@ -450,7 +386,7 @@ function renderArtist(app) {
   setTimeout(() => {
     document.getElementById('artist-back')?.addEventListener('click', goBack);
     document.getElementById('artist-play')?.addEventListener('click', () => {
-      const tracks = state.artistData.topTracks || [];
+      const tracks = a.topTracks || [];
       if (tracks.length > 0 && state.deviceId) {
         api(`/me/player/play?device_id=${state.deviceId}`, {
           method: 'PUT',
@@ -458,7 +394,7 @@ function renderArtist(app) {
         });
         navigate('nowplaying');
       } else if (state.deviceId) {
-        playContext(state.artistData.uri);
+        playContext(a.uri);
         navigate('nowplaying');
       } else {
         showToast('Connecting…', 'info');
@@ -466,6 +402,51 @@ function renderArtist(app) {
     });
   }, 0);
 
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Popular Tracks View ============
+
+function renderPopularTracks(app) {
+  if (!state.artistData) { goBack(); return; }
+
+  const header = createHeader(truncate(state.artistData.name, 16), true);
+  app.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  const tracks = state.artistData.topTracks || [];
+  if (tracks.length === 0) {
+    container.innerHTML = `<div class="empty-state">No tracks found</div>`;
+  } else {
+    tracks.forEach((track, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${track.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(track.name, 26)}</div>
+            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => {
+        playTrackInContext(track.contextUri || track.uri, track.uri);
+        navigate('nowplaying');
+      });
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
   if (state.currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
@@ -503,12 +484,12 @@ function renderDiscography(app) {
   let items = [];
   if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
     (a.albums || []).forEach(al => {
-      items.push({ name: al.name, artist: al.year, image: al.image, type: 'album', id: al.id, uri: al.uri });
+      items.push({ name: al.name, artist: al.year, image: al.image, type: 'album', releaseType: 'album', id: al.id, uri: al.uri });
     });
   }
   if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
     (a.singles || []).forEach(s => {
-      items.push({ name: s.name, artist: s.year, image: s.image, type: 'album', id: s.id, uri: s.uri });
+      items.push({ name: s.name, artist: s.year, image: s.image, type: 'album', releaseType: 'single', id: s.id, uri: s.uri });
     });
   }
 
@@ -520,9 +501,10 @@ function renderDiscography(app) {
       card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
       card.dataset.idx = i;
       card.style.backgroundImage = `url('${item.image}')`;
+      const typeLabel = item.releaseType === 'single' ? 'Single / EP' : 'Album';
       const sublabel = item.artist
-        ? `<span>Album</span><span class="dot">·</span><span>${item.artist}</span>` 
-        : `<span>Album</span>`;
+        ? `<span>${typeLabel}</span><span class="dot">·</span><span>${item.artist}</span>`
+        : `<span>${typeLabel}</span>`;
       card.innerHTML = `
         <div class="content-card-overlay"></div>
         <div class="content-card-content">
@@ -858,13 +840,14 @@ export function getListLength() {
   if (state.currentView === 'artist') {
     if (!state.artistData) return 0;
     const a = state.artistData;
-    const d = state.discographyFilter;
     let count = 1; // hero card
-    if (d === 'popular') count += (a.topTracks || []).length;
-    if (d === 'all' || d === 'about') count += 1; // about card
+    if ((a.topTracks || []).length > 0) count += 1; // popular tracks nav card
     const discTotal = (a.albums || []).length + (a.singles || []).length;
     if (discTotal > 0) count += 1; // discography nav card
     return count;
+  }
+  if (state.currentView === 'popular-tracks') {
+    return (state.artistData?.topTracks || []).length;
   }
   if (state.currentView === 'discography') {
     if (!state.artistData) return 0;

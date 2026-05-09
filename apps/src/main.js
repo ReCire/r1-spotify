@@ -40,7 +40,10 @@ window.addEventListener('sideClick', () => {
   } else if (state.currentView === 'nowplaying') {
     togglePlayback();
   } else if (state.currentView === 'artist') {
-    const focused = document.querySelector('.artist-hero-card.focused, .content-card.focused');
+    const focused = document.querySelector('.artist-hero-card.focused, .cat-card.focused, .content-card.focused');
+    if (focused) focused.click();
+  } else if (state.currentView === 'popular-tracks') {
+    const focused = document.querySelector('.content-card.focused');
     if (focused) focused.click();
   } else if (state.currentView === 'discography') {
     const focused = document.querySelector('.content-card.focused');
