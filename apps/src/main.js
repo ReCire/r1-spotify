@@ -41,6 +41,7 @@ let selectedPlaylist = null;
 let progressInterval = null;
 let viewStack = [];
 let homeSections = [];
+let homeFilter = 'all';
 let artistData = null;
 let artistDiscography = null;
 let albumTracks = [];
@@ -263,13 +264,15 @@ async function api(endpoint, options = {}) {
 
 // ============ Spotify Web Playback SDK ============
 
-function initPlayer() {
-  window.onSpotifyWebPlaybackSDKReady = () => {
-    if (!accessToken) return;
+// Define callback globally before SDK loads
+window.onSpotifyWebPlaybackSDKReady = () => {
+  if (accessToken && !player) {
     createPlayer();
-  };
+  }
+};
 
-  if (window.Spotify) {
+function initPlayer() {
+  if (window.Spotify && accessToken && !player) {
     createPlayer();
   }
 }
@@ -418,8 +421,9 @@ async function fetchPlaylists() {
 }
 
 async function fetchPlaylistTracks(playlistId) {
-  const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
-  if (data && data.items) {
+  try {
+    const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
+    if (data && data.items) {
     playlistTracks = data.items
       .filter(item => item.track && item.track.uri)
       .map(item => ({
@@ -430,136 +434,102 @@ async function fetchPlaylistTracks(playlistId) {
         uri: item.track.uri,
         durationMs: item.track.duration_ms
       }));
-  } else {
+    } else {
+      playlistTracks = [];
+    }
+  } catch (err) {
+    console.error('Fetch playlist tracks error:', err);
     playlistTracks = [];
   }
 }
 
 async function fetchHomeSections() {
-  homeSections = [];
+  try {
+    const [recentData, madeForData, topTracksData, topArtistsData, newReleasesData, categoriesData] = await Promise.all([
+      api('/me/player/recently-played?limit=1'),
+      api('/browse/featured-playlists?limit=1'),
+      api('/me/top/tracks?time_range=short_term&limit=1'),
+      api('/me/top/artists?time_range=medium_term&limit=1'),
+      api('/browse/new-releases?limit=1'),
+      api('/browse/categories?limit=20')
+    ]);
 
-  // Recently played
-  const recent = await api('/me/player/recently-played?limit=8');
-  if (recent?.items?.length) {
-    const seen = new Set();
-    const tracks = recent.items.filter(i => {
-      if (seen.has(i.track?.uri)) return false;
-      seen.add(i.track?.uri);
-      return true;
-    }).slice(0, 6);
-    if (tracks.length) {
-      homeSections.push({
-        title: 'Recents',
-        image: tracks[0].track.album?.images?.[0]?.url || '',
-        type: 'category',
-        action: 'recents',
-        items: tracks.map(i => ({
-          name: i.track.name,
-          subtitle: i.track.artists?.[0]?.name || '',
-          image: i.track.album?.images?.[0]?.url || '',
-          type: 'track',
-          uri: i.track.uri,
-          contextUri: i.context?.uri || i.track.album?.uri || ''
-        }))
+    homeSections = [];
+
+    if (recentData?.items?.length) {
+      const img = recentData.items[0]?.track?.album?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Recents', 
+        image: img,
+        categoryType: 'recents',
+        contentType: 'music'
       });
     }
-  }
 
-  // Made for you
-  if (playlists.length) {
-    const madeFor = playlists.filter(p => p.owner === 'Spotify' || p.name.toLowerCase().includes('mix') || p.name.toLowerCase().includes('discover'));
-    if (madeFor.length) {
-      homeSections.push({
-        title: 'Made For You',
-        image: madeFor[0].image,
-        type: 'category',
-        action: 'madefor',
-        items: madeFor.slice(0, 8).map(p => ({
-          name: p.name, subtitle: 'Playlist', image: p.image,
-          type: 'playlist', uri: p.uri, id: p.id
-        }))
+    if (madeForData?.playlists?.items?.length) {
+      const img = madeForData.playlists.items[0]?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Made For You', 
+        image: img,
+        categoryType: 'made-for-you',
+        contentType: 'music'
       });
     }
-  }
 
-  // Top tracks (Picked for you)
-  const topTracks = await api('/me/top/tracks?limit=8&time_range=short_term');
-  if (topTracks?.items?.length) {
-    homeSections.push({
-      title: 'Picked For You',
-      image: topTracks.items[0].album?.images?.[0]?.url || '',
-      type: 'category',
-      action: 'pickedforyou',
-      items: topTracks.items.map(t => ({
-        name: t.name, subtitle: t.artists?.[0]?.name || '',
-        image: t.album?.images?.[0]?.url || '',
-        type: 'track', uri: t.uri,
-        contextUri: t.album?.uri || ''
-      }))
-    });
-  }
-
-  // Jump Back In (user playlists)
-  if (playlists.length) {
-    const userPl = playlists.filter(p => p.owner !== 'Spotify').slice(0, 8);
-    if (userPl.length) {
-      homeSections.push({
-        title: 'Jump Back In',
-        image: userPl[0].image,
-        type: 'category',
-        action: 'jumpbackin',
-        items: userPl.map(p => ({
-          name: p.name, subtitle: `${p.trackCount} tracks`,
-          image: p.image, type: 'playlist', uri: p.uri, id: p.id
-        }))
+    if (topTracksData?.items?.length) {
+      const img = topTracksData.items[0]?.album?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Jump Back In', 
+        image: img,
+        categoryType: 'jump-back-in',
+        contentType: 'music'
       });
     }
-  }
 
-  // Top artists
-  const topArtists = await api('/me/top/artists?limit=8&time_range=medium_term');
-  if (topArtists?.items?.length) {
-    homeSections.push({
-      title: 'Your Top Artists',
-      image: topArtists.items[0].images?.[0]?.url || '',
-      type: 'category',
-      action: 'topartists',
-      items: topArtists.items.map(a => ({
-        name: a.name, subtitle: 'Artist',
-        image: a.images?.[0]?.url || '',
-        type: 'artist', id: a.id, uri: a.uri
-      }))
-    });
-  }
+    if (topArtistsData?.items?.length) {
+      const img = topArtistsData.items[0]?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Your Top Artists', 
+        image: img,
+        categoryType: 'top-artists',
+        contentType: 'music'
+      });
+    }
 
-  // New releases
-  const newReleases = await api('/browse/new-releases?limit=8');
-  if (newReleases?.albums?.items?.length) {
-    homeSections.push({
-      title: 'New Releases',
-      image: newReleases.albums.items[0].images?.[0]?.url || '',
-      type: 'category',
-      action: 'newreleases',
-      items: newReleases.albums.items.map(a => ({
-        name: a.name, subtitle: a.artists?.[0]?.name || '',
-        image: a.images?.[0]?.url || '',
-        type: 'album', id: a.id, uri: a.uri
-      }))
-    });
-  }
+    if (newReleasesData?.albums?.items?.length) {
+      const img = newReleasesData.albums.items[0]?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'New Releases', 
+        image: img,
+        categoryType: 'new-releases',
+        contentType: 'music'
+      });
+    }
 
-  // Your Library
-  if (playlists.length) {
-    homeSections.push({
-      title: 'Your Library',
-      image: playlists[0].image,
-      type: 'category',
-      action: 'library',
-      items: playlists.slice(0, 20).map(p => ({
-        name: p.name, subtitle: `Playlist · ${p.trackCount} tracks`,
-        image: p.image, type: 'playlist', uri: p.uri, id: p.id
-      }))
-    });
+    if (categoriesData?.categories?.items) {
+      categoriesData.categories.items.forEach(cat => {
+        homeSections.push({
+          title: cat.name,
+          image: cat.icons?.[0]?.url || '',
+          categoryType: 'browse-category',
+          categoryId: cat.id,
+          contentType: 'music'
+        });
+      });
+    }
+
+    if (playlists.length) {
+      const img = playlists[0]?.image || '';
+      homeSections.push({ 
+        title: 'Your Library', 
+        image: img,
+        categoryType: 'library',
+        contentType: 'music'
+      });
+    }
+  } catch (err) {
+    console.error('Home sections error:', err);
+    homeSections = [];
   }
 }
 
@@ -774,14 +744,34 @@ function renderHome(app) {
   const header = createHeader('Home', true);
   app.appendChild(header);
 
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  filterBar.innerHTML = `
+    <button class="filter-btn ${homeFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
+    <button class="filter-btn ${homeFilter === 'music' ? 'active' : ''}" data-filter="music">Music</button>
+    <button class="filter-btn ${homeFilter === 'podcasts' ? 'active' : ''}" data-filter="podcasts">Podcasts</button>
+    <button class="filter-btn ${homeFilter === 'audiobooks' ? 'active' : ''}" data-filter="audiobooks">Audiobooks</button>
+  `;
+  filterBar.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      homeFilter = btn.dataset.filter;
+      render();
+    });
+  });
+  app.appendChild(filterBar);
+
   const container = document.createElement('div');
   container.className = 'list-container';
   container.id = 'list-container';
 
-  if (homeSections.length === 0) {
-    container.innerHTML = `<div class="empty-state">Loading…</div>`;
+  const filteredSections = homeFilter === 'all' 
+    ? homeSections 
+    : homeSections.filter(s => s.contentType === homeFilter);
+
+  if (filteredSections.length === 0) {
+    container.innerHTML = `<div class="empty-state">No content</div>`;
   } else {
-    homeSections.forEach((section, i) => {
+    filteredSections.forEach((section, i) => {
       const card = document.createElement('div');
       card.className = `cat-card ${i === scrollIndex ? 'focused' : ''}`;
       card.dataset.idx = i;
@@ -817,24 +807,39 @@ function renderSection(app) {
   container.className = 'list-container';
   container.id = 'list-container';
 
-  currentSection.items.forEach((item, i) => {
-    const card = document.createElement('div');
-    card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = i;
-    card.style.backgroundImage = `url('${item.image}')`;
-    card.innerHTML = `
-      <div class="content-card-overlay"></div>
-      <div class="content-card-content">
-        <div class="content-card-labels">
-          <div class="content-card-name">${truncate(item.name, 28)}</div>
-          <div class="content-card-sub">${item.subtitle ? `<span>${item.type === 'track' ? 'Song' : item.type === 'playlist' ? 'Playlist' : item.type === 'album' ? 'Album' : 'Artist'}</span>${item.subtitle ? `<span class="dot">·</span><span>${truncate(item.subtitle, 20)}</span>` : ''}` : `<span>${item.type === 'track' ? 'Song' : item.type === 'playlist' ? 'Playlist' : item.type === 'album' ? 'Album' : 'Artist'}</span>`}</div>
+  if (currentSection.items.length === 0) {
+    container.innerHTML = `<div class="empty-state">Loading…</div>`;
+  } else {
+    currentSection.items.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${item.image}')`;
+      
+      let typeLabel = capitalize(item.type);
+      let sublabel = '';
+      if (item.type === 'artist') {
+        sublabel = '';
+      } else if (item.artist) {
+        sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 20)}</span>`;
+      } else {
+        sublabel = `<span>${typeLabel}</span>`;
+      }
+      
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(item.name, 26)}</div>
+            ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
+          </div>
+          ${chevronRight()}
         </div>
-        ${chevronRight()}
-      </div>
-    `;
-    card.addEventListener('click', () => handleContentCardClick(item));
-    container.appendChild(card);
-  });
+      `;
+      card.addEventListener('click', () => handleContentCardClick(item));
+      container.appendChild(card);
+    });
+  }
 
   app.appendChild(container);
   if (currentTrack) app.appendChild(createMiniPlayer());
@@ -854,9 +859,129 @@ function handleContentCardClick(item) {
   }
 }
 
-function openSection(section) {
-  currentSection = section;
+async function openSection(section) {
+  currentSection = { 
+    title: section.title, 
+    items: [], 
+    categoryType: section.categoryType,
+    categoryId: section.categoryId
+  };
   navigate('section');
+  await fetchSectionItems(section.categoryType);
+  if (currentView === 'section') render();
+}
+
+async function fetchSectionItems(categoryType) {
+  try {
+    let data;
+    switch (categoryType) {
+      case 'recents':
+        data = await api('/me/player/recently-played?limit=20');
+        if (data?.items) {
+          const seen = new Set();
+          currentSection.items = data.items.filter(i => {
+            if (!i.track?.uri || seen.has(i.track.uri)) return false;
+            seen.add(i.track.uri);
+            return true;
+          }).map(i => ({
+            name: i.track.name,
+            artist: i.track.artists?.[0]?.name || '',
+            image: i.track.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: i.track.uri
+          }));
+        }
+        break;
+
+      case 'made-for-you':
+        data = await api('/browse/featured-playlists?limit=20');
+        if (data?.playlists?.items) {
+          currentSection.items = data.playlists.items.map(p => ({
+            name: p.name,
+            artist: p.owner?.display_name || 'Spotify',
+            image: p.images?.[0]?.url || '',
+            type: 'playlist',
+            uri: p.uri,
+            id: p.id
+          }));
+        }
+        break;
+
+      case 'jump-back-in':
+        data = await api('/me/top/tracks?time_range=short_term&limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(t => ({
+            name: t.name,
+            artist: t.artists?.[0]?.name || '',
+            image: t.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: t.uri
+          }));
+        }
+        break;
+
+      case 'top-artists':
+        data = await api('/me/top/artists?time_range=medium_term&limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(a => ({
+            name: a.name,
+            artist: '',
+            image: a.images?.[0]?.url || '',
+            type: 'artist',
+            uri: a.uri,
+            id: a.id
+          }));
+        }
+        break;
+
+      case 'new-releases':
+        data = await api('/browse/new-releases?limit=20');
+        if (data?.albums?.items) {
+          currentSection.items = data.albums.items.map(a => ({
+            name: a.name,
+            artist: a.artists?.[0]?.name || '',
+            image: a.images?.[0]?.url || '',
+            type: 'album',
+            uri: a.uri,
+            id: a.id
+          }));
+        }
+        break;
+
+      case 'library':
+        currentSection.items = playlists.map(p => ({
+          name: p.name,
+          artist: `${p.tracks || 0} tracks`,
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }));
+        break;
+
+      case 'browse-category':
+        if (currentSection.categoryId) {
+          data = await api(`/browse/categories/${currentSection.categoryId}/playlists?limit=20`);
+          if (data?.playlists?.items) {
+            currentSection.items = data.playlists.items.map(p => ({
+              name: p.name,
+              artist: p.owner?.display_name || 'Spotify',
+              image: p.images?.[0]?.url || '',
+              type: 'playlist',
+              uri: p.uri,
+              id: p.id
+            }));
+          }
+        }
+        break;
+
+      default:
+        currentSection.items = [];
+    }
+  } catch (err) {
+    console.error('Fetch section items error:', err);
+    currentSection.items = [];
+  }
 }
 
 // ============ Playlist View (Content Cards) ============
@@ -1205,8 +1330,9 @@ function createHeader(title, showSearch) {
   }
 
   let rightBtn = '';
-  if (showSearch && currentView !== 'search') {
-    rightBtn = `<button class="header-btn" id="header-search">${searchIcon()}</button>`;
+  if (showSearch) {
+    const isSearchView = currentView === 'search';
+    rightBtn = `<button class="header-btn ${isSearchView ? 'disabled' : ''}" id="header-search">${searchIcon()}</button>`;
   }
 
   header.innerHTML = `${leftBtn}<div class="header-title">${title}</div>${rightBtn}`;
@@ -1215,7 +1341,9 @@ function createHeader(title, showSearch) {
     const backBtn = document.getElementById('header-back');
     if (backBtn) backBtn.addEventListener('click', goBack);
     const searchBtn = document.getElementById('header-search');
-    if (searchBtn) searchBtn.addEventListener('click', () => navigate('search'));
+    if (searchBtn && currentView !== 'search') {
+      searchBtn.addEventListener('click', () => navigate('search'));
+    }
   }, 0);
 
   return header;

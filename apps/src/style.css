@@ -79,6 +79,43 @@ html, body {
   height: 14px;
 }
 
+.header-btn.disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* ========== Filter Bar ========== */
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+  background: #121212;
+}
+
+.filter-btn {
+  flex: 1;
+  height: 28px;
+  background: #282828;
+  border: none;
+  border-radius: 14px;
+  color: #b3b3b3;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, color 0.15s;
+}
+
+.filter-btn.active {
+  background: #fff;
+  color: #000;
+}
+
+.filter-btn:active:not(.active) {
+  background: #333;
+}
+
 /* ========== Login View ========== */
 .view-login {
   flex: 1;
