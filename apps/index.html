@@ -9,36 +9,6 @@
 </head>
 <body>
     <div id="app"></div>
-    <script>
-      // R1 audio fix: resume any suspended AudioContext on first user gesture,
-      // and play a silent HTMLAudio element to unlock the hardware audio route.
-      (function () {
-        var _AC = window.AudioContext || window.webkitAudioContext;
-        if (!_AC) return;
-        var _contexts = [];
-        var Patched = function () {
-          var ctx = new _AC();
-          _contexts.push(ctx);
-          return ctx;
-        };
-        Patched.prototype = _AC.prototype;
-        window.AudioContext = window.webkitAudioContext = Patched;
-
-        var unlocked = false;
-        function unlock() {
-          if (unlocked) return;
-          unlocked = true;
-          // Silent 1-sample WAV to prime the audio hardware path
-          var silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
-          silent.play().catch(function () {});
-          _contexts.forEach(function (ctx) {
-            if (ctx.state === 'suspended') ctx.resume().catch(function () {});
-          });
-        }
-        document.addEventListener('click', unlock, { once: true });
-        document.addEventListener('touchend', unlock, { once: true });
-      })();
-    </script>
     <script src="https://sdk.scdn.co/spotify-player.js"></script>
     <script type="module" src="/src/main.js"></script>
 </body>

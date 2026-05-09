@@ -370,27 +370,31 @@ export async function fetchArtist(artistId) {
   const artist = await api(`/artists/${artistId}`);
   if (!artist) return null;
 
-  // Run all fetches in parallel
-  const [albumsRes, searchRes, recsRes] = await Promise.allSettled([
-    api(`/search?q=artist:"${encodeURIComponent(artist.name)}"&type=album&limit=50&market=from_token`),
-    api(`/search?q=artist:"${encodeURIComponent(artist.name)}"&type=track&limit=10&market=from_token`),
+  const searchQ = encodeURIComponent(`artist:"${artist.name}"`);
+
+  // Run track search and recommendations in parallel; albums handled separately below
+  const [searchRes, recsRes] = await Promise.allSettled([
+    api(`/search?q=${searchQ}&type=track&limit=10`),
     api(`/recommendations?seed_artists=${artistId}&limit=10`)
   ]);
 
-  // 2. Discography from albums search endpoint
-  const albumsList = albumsRes.status === 'fulfilled' ? albumsRes.value?.albums?.items || [] : [];
-  
-  const filteredAlbumsList = albumsList.filter(a => a.artists?.some(ar => ar.id === artistId));
-  
+  // Discography: try official endpoint first, fall back to search on failure
+  let rawAlbumItems = [];
+  const officialAlbums = await api(`/artists/${artistId}/albums?include_groups=album,single&limit=50`);
+  if (officialAlbums?.items?.length) {
+    rawAlbumItems = officialAlbums.items;
+  } else {
+    const albumSearch = await api(`/search?q=${searchQ}&type=album&limit=50`);
+    rawAlbumItems = (albumSearch?.albums?.items || [])
+      .filter(a => a.artists?.some(ar => ar.id === artistId));
+  }
+
   const albums = [];
   const singles = [];
-  const appearsOn = [];
   const seenIds = new Set();
-
-  filteredAlbumsList.forEach(item => {
+  rawAlbumItems.forEach(item => {
     if (seenIds.has(item.id)) return;
     seenIds.add(item.id);
-
     const mapped = {
       id: item.id,
       name: item.name,
@@ -398,15 +402,11 @@ export async function fetchArtist(artistId) {
       uri: item.uri,
       year: item.release_date?.slice(0, 4) || ''
     };
-
-    if (item.album_type === 'album') {
-      albums.push(mapped);
-    } else if (item.album_type === 'single') {
-      singles.push(mapped);
-    }
+    if (item.album_type === 'album') albums.push(mapped);
+    else if (item.album_type === 'single') singles.push(mapped);
   });
 
-  // 3. Top tracks via search workaround
+  // Top tracks via search
   const tracks = searchRes.status === 'fulfilled' ? searchRes.value?.tracks?.items || [] : [];
   const topTracks = tracks
     .filter(t => t.artists.some(a => a.id === artistId))
@@ -420,18 +420,13 @@ export async function fetchArtist(artistId) {
       durationMs: t.duration_ms
     }));
 
-  // 4. Related artists from recommendations
+  // Related artists from recommendations
   const recsTracks = recsRes.status === 'fulfilled' ? recsRes.value?.tracks || [] : [];
   const relatedArtists = recsTracks
     .map(t => t.artists[0])
     .filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i)
     .filter(a => a.id !== artistId)
-    .map(a => ({
-      id: a.id,
-      name: a.name,
-      image: '',
-      uri: a.uri
-    }));
+    .map(a => ({ id: a.id, name: a.name, image: '', uri: a.uri }));
 
   state.artistData = {
     id: artist.id,

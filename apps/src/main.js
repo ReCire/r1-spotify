@@ -4,6 +4,26 @@ import { loadToken, refreshToken, startAuth, handleCallback, loadVolume } from '
 import { fetchPlaylists, fetchHomeSections, initPlayer, togglePlayback, nextTrack, prevTrack, adjustVolume } from './api.js';
 import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding, updateNowPlaying, updateProgressBar, showVolumeToast, triggerHaptic } from './ui.js';
 
+// ============ Audio Unlock ============
+
+// R1 (Android WebView) requires a user gesture to route audio to hardware.
+// The Spotify SDK exposes activateElement() for exactly this purpose.
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  // SDK method: must be called in a user-gesture handler
+  if (state.player) {
+    state.player.activateElement();
+  }
+  // Also prime the hardware audio path via HTMLAudioElement (works on R1 where
+  // Web Audio API alone may not route to speaker/BT)
+  const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+  silent.play().catch(() => {});
+}
+document.addEventListener('click', unlockAudio, { once: true });
+document.addEventListener('touchend', unlockAudio, { once: true });
+
 // ============ R1 Hardware Events ============
 
 window.addEventListener('scrollUp', () => handleScroll(-1, true));
