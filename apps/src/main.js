@@ -1782,9 +1782,44 @@ function handleScroll(dir) {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
     
-    // Normal scrolling - just increment/decrement scrollIndex
-    scrollIndex = Math.max(0, Math.min(maxIdx, scrollIndex + dir));
-    scrollFocusedIntoView();
+    const container = document.getElementById('list-container');
+    if (!container) return;
+    
+    const stickyIndex = 2; // Selection stays at this index in viewport
+    const items = container.querySelectorAll('.cat-card, .content-card');
+    if (items.length === 0) return;
+    
+    const cardHeight = items[0]?.offsetHeight || 44;
+    
+    // Check if we're near the ends
+    const nearTop = scrollIndex < stickyIndex;
+    const nearBottom = scrollIndex > maxIdx - stickyIndex;
+    
+    if (nearTop && dir === 1) {
+      // Near top scrolling down - move selection normally until past sticky index
+      scrollIndex++;
+      updateFocusedCard();
+      return;
+    }
+    if (nearBottom && dir === -1) {
+      // Near bottom scrolling up - move selection normally until past sticky index
+      scrollIndex--;
+      updateFocusedCard();
+      return;
+    }
+    
+    // In the middle - use sticky behavior
+    container.scrollTop += dir * cardHeight;
+    
+    // Calculate which item should be at sticky position based on scroll
+    const newScrollTop = container.scrollTop;
+    const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(newScrollTop / cardHeight) + stickyIndex));
+    
+    // Clamp to valid range and ensure we can reach the ends
+    if (newIndex !== scrollIndex && newIndex >= 0 && newIndex <= maxIdx) {
+      scrollIndex = newIndex;
+      updateFocusedCard();
+    }
   }
 }
 
