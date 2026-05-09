@@ -1790,19 +1790,20 @@ function handleScroll(dir) {
     if (items.length === 0) return;
     
     const cardHeight = items[0]?.offsetHeight || 44;
+    const threshold = cardHeight * 2; // 2 card heights from ends
     
-    // Check if we're near the ends
-    const nearTop = scrollIndex < stickyIndex;
-    const nearBottom = scrollIndex > maxIdx - stickyIndex;
+    // Check actual scroll position to determine mode
+    const atTop = container.scrollTop <= threshold;
+    const atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - threshold;
     
-    if (nearTop && dir === 1) {
-      // Near top scrolling down - move selection normally until past sticky index
+    if (atTop && dir === 1 && scrollIndex < stickyIndex) {
+      // Near top scrolling down - move selection normally until sticky position
       scrollIndex++;
       updateFocusedCard();
       return;
     }
-    if (nearBottom && dir === -1) {
-      // Near bottom scrolling up - move selection normally until past sticky index
+    if (atBottom && dir === -1 && scrollIndex > maxIdx - stickyIndex) {
+      // Near bottom scrolling up - move selection normally
       scrollIndex--;
       updateFocusedCard();
       return;
@@ -1815,7 +1816,6 @@ function handleScroll(dir) {
     const newScrollTop = container.scrollTop;
     const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(newScrollTop / cardHeight) + stickyIndex));
     
-    // Clamp to valid range and ensure we can reach the ends
     if (newIndex !== scrollIndex && newIndex >= 0 && newIndex <= maxIdx) {
       scrollIndex = newIndex;
       updateFocusedCard();
