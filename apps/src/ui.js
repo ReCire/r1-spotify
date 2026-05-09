@@ -1,7 +1,7 @@
 // Spotify R1 Player - UI Rendering
 import { state } from './state.js';
 import { startAuth } from './auth.js';
-import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks, startProgressTimer, togglePlayback, prevTrack, nextTrack, searchSpotify, toggleFollowArtist } from './api.js';
+import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks, startProgressTimer, togglePlayback, prevTrack, nextTrack, searchSpotify } from './api.js';
 
 // ============ Main Render ============
 
@@ -323,9 +323,6 @@ function renderArtist(app) {
       <div class="artist-stats">${formatFollowers(state.artistData.followers)} followers</div>
       <div class="artist-actions">
         <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
-        <button class="artist-follow-btn ${state.artistIsFollowed ? 'following' : ''}" id="artist-follow">
-          ${state.artistIsFollowed ? 'Following' : 'Follow'}
-        </button>
       </div>
     </div>
     <div class="scroll-down-indicator">${chevronDown()}</div>
@@ -360,15 +357,6 @@ function renderArtist(app) {
         api('/me/player/play', { method: 'PUT', body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) }) });
         navigate('nowplaying');
       } else { showToast('No tracks found', 'warning'); }
-    });
-    document.getElementById('artist-follow')?.addEventListener('click', async () => {
-      await toggleFollowArtist(state.artistData.id, state.artistIsFollowed);
-      const btn = document.getElementById('artist-follow');
-      if (btn) {
-        btn.textContent = state.artistIsFollowed ? 'Following' : 'Follow';
-        btn.classList.toggle('following', state.artistIsFollowed);
-      }
-      showToast(state.artistIsFollowed ? 'Following' : 'Unfollowed', 'info');
     });
   }, 0);
 

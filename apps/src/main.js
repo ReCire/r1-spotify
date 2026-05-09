@@ -20,8 +20,6 @@ function handleScroll(dir) {
   if (state.currentView === 'nowplaying') {
     adjustVolume(dir * -0.05);
     triggerHaptic(); // Optional bump when changing volume
-  } else if (state.currentView === 'artist') {
-    // no scroll on artist hero
   } else {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
