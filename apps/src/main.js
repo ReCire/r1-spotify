@@ -1614,16 +1614,18 @@ function scrollFocusedIntoView() {
     item.classList.toggle('focused', i === scrollIndex);
   });
 
-  // Calculate sticky position
-  const cardHeight = items[0].offsetHeight || 44;
-  const stickyIndex = 2; // Keep selected item at the 3rd position from the top
+  const focusedItem = items[scrollIndex];
+  if (!focusedItem) return;
 
-  // targetScroll is the scroll position required to put 'scrollIndex' at 'stickyIndex'
-  const targetScroll = (scrollIndex - stickyIndex) * cardHeight;
+  const cardHeight = focusedItem.offsetHeight || 44;
+  const containerHeight = container.clientHeight; // Automatically accounts for the bottom padding when the player is visible!
 
-  // Smoothly scroll to the target. 
-  // Math.max(0) handles the top. 
-  // The browser automatically clamps values larger than scrollHeight at the bottom.
+  // Calculate the scroll position required to place the center of the card 
+  // into the exact center of the visible container area.
+  const targetScroll = (scrollIndex * cardHeight) + (cardHeight / 2) - (containerHeight / 2);
+
+  // Scroll smoothly. Math.max(0) prevents scrolling past the top.
+  // The browser naturally prevents scrolling past the bottom.
   container.scrollTo({
     top: Math.max(0, targetScroll),
     behavior: 'smooth'
