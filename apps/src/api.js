@@ -250,11 +250,11 @@ export async function fetchHomeSections() {
       api('/me/audiobooks?limit=6')
     ]);
 
-    homeSections = [];
+    state.homeSections = [];
 
     if (recentData?.items?.length) {
       const img = recentData.items[0]?.track?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Recents', 
         image: img,
         categoryType: 'recents',
@@ -264,7 +264,7 @@ export async function fetchHomeSections() {
 
     if (topTracksShort?.items?.length) {
       const img = topTracksShort.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Jump Back In', 
         image: img,
         categoryType: 'jump-back-in',
@@ -274,7 +274,7 @@ export async function fetchHomeSections() {
 
     if (topArtistsData?.items?.length) {
       const img = topArtistsData.items[0]?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Your Top Artists', 
         image: img,
         categoryType: 'top-artists',
@@ -284,7 +284,7 @@ export async function fetchHomeSections() {
 
     if (topTracksLong?.items?.length) {
       const img = topTracksLong.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'All-Time Favourites', 
         image: img,
         categoryType: 'all-time-favourites',
@@ -294,7 +294,7 @@ export async function fetchHomeSections() {
 
     if (savedAlbums?.items?.length) {
       const img = savedAlbums.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Saved Albums', 
         image: img,
         categoryType: 'saved-albums',
@@ -304,7 +304,7 @@ export async function fetchHomeSections() {
 
     if (showsData?.items?.length) {
       const img = showsData.items[0]?.show?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Your Podcasts', 
         image: img,
         categoryType: 'podcasts',
@@ -314,7 +314,7 @@ export async function fetchHomeSections() {
 
     if (audiobooksData?.items?.length) {
       const img = audiobooksData.items[0]?.images?.[0]?.url || '';
-      homeSections.push({ 
+      state.homeSections.push({ 
         title: 'Your Audiobooks', 
         image: img,
         categoryType: 'audiobooks',
