@@ -16,33 +16,43 @@ function showToast(msg, type = 'info') {
 // ============ Spotify API Helpers ============
 
 export async function api(endpoint, options = {}) {
-  if (Date.now() >= state.tokenExpiry - 60000) {
-    const refreshed = await refreshToken();
-    if (!refreshed) {
+  try {
+    if (Date.now() >= state.tokenExpiry - 60000) {
+      const refreshed = await refreshToken();
+      if (!refreshed) {
+        state.currentView = 'login';
+        return null;
+      }
+    }
+
+    const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${state.accessToken}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      }
+    });
+
+    if (res.status === 401) {
+      const refreshed = await refreshToken();
+      if (refreshed) return api(endpoint, options);
       state.currentView = 'login';
       return null;
     }
-  }
 
-  const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${state.accessToken}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
+    if (res.status === 204) return {};
+    if (!res.ok) return null;
+    try {
+      return await res.json();
+    } catch (_) {
+      return null;
     }
-  });
-
-  if (res.status === 401) {
-    const refreshed = await refreshToken();
-    if (refreshed) return api(endpoint, options);
-    state.currentView = 'login';
+  } catch (e) {
+    // Network failures, aborts, etc. — never throw to callers
+    console.warn('API call failed:', endpoint, e?.message || e);
     return null;
   }
-
-  if (res.status === 204) return {};
-  if (!res.ok) return null;
-  return res.json();
 }
 
 // ============ Spotify Web Playback SDK ============
@@ -66,8 +76,17 @@ function createPlayer() {
   state.player = new Spotify.Player({
     name: 'Rabbit R1',
     getOAuthToken: async (cb) => {
-      if (Date.now() >= state.tokenExpiry - 60000) await refreshToken();
-      cb(state.accessToken);
+      try {
+        if (Date.now() >= state.tokenExpiry - 60000) {
+          await refreshToken();
+        }
+        cb(state.accessToken || '');
+      } catch (e) {
+        // Never let this reject — the SDK doesn't handle rejections and they
+        // surface as unhandled promise errors at app init.
+        console.warn('getOAuthToken failed:', e?.message || e);
+        cb(state.accessToken || '');
+      }
     },
     volume: state.volume
   });
@@ -120,7 +139,15 @@ function createPlayer() {
     window.dispatchEvent(new CustomEvent('authError'));
   });
 
-  state.player.connect();
+  // connect() returns a Promise; capture rejection so it's not unhandled.
+  try {
+    const connectResult = state.player.connect();
+    if (connectResult && typeof connectResult.catch === 'function') {
+      connectResult.catch((e) => console.warn('Player connect failed:', e?.message || e));
+    }
+  } catch (e) {
+    console.warn('Player connect threw:', e?.message || e);
+  }
 }
 
 async function transferPlayback(devId) {
@@ -370,63 +397,61 @@ export async function fetchArtist(artistId) {
   const artist = await api(`/artists/${artistId}`);
   if (!artist) return null;
 
-  const searchQ = encodeURIComponent(`artist:"${artist.name}"`);
+  // Spotify's official /artists/{id}/top-tracks and /artists/{id}/albums return
+  // 403 for non-Enterprise accounts (Nov 2024). We use the search endpoint as a
+  // workaround. A broad name-only query is more reliable than `artist:"name"` —
+  // some artists have no results for the field-filter form.
+  const nameQ = encodeURIComponent(artist.name);
 
-  // Run track search and recommendations in parallel; albums handled separately below
-  const [searchRes, recsRes] = await Promise.allSettled([
-    api(`/search?q=${searchQ}&type=track&limit=10`),
-    api(`/recommendations?seed_artists=${artistId}&limit=10`)
+  const [trackSearchRes, albumSearchRes] = await Promise.allSettled([
+    api(`/search?q=${nameQ}&type=track&limit=50`),
+    api(`/search?q=${nameQ}&type=album&limit=50`)
   ]);
 
-  // Discography: try official endpoint first, fall back to search on failure
-  let rawAlbumItems = [];
-  const officialAlbums = await api(`/artists/${artistId}/albums?include_groups=album,single&limit=50`);
-  if (officialAlbums?.items?.length) {
-    rawAlbumItems = officialAlbums.items;
-  } else {
-    const albumSearch = await api(`/search?q=${searchQ}&type=album&limit=50`);
-    rawAlbumItems = (albumSearch?.albums?.items || [])
-      .filter(a => a.artists?.some(ar => ar.id === artistId));
-  }
-
-  const albums = [];
-  const singles = [];
-  const seenIds = new Set();
-  rawAlbumItems.forEach(item => {
-    if (seenIds.has(item.id)) return;
-    seenIds.add(item.id);
-    const mapped = {
-      id: item.id,
-      name: item.name,
-      image: item.images?.[0]?.url || '',
-      uri: item.uri,
-      year: item.release_date?.slice(0, 4) || ''
-    };
-    if (item.album_type === 'album') albums.push(mapped);
-    else if (item.album_type === 'single') singles.push(mapped);
-  });
-
-  // Top tracks via search
-  const tracks = searchRes.status === 'fulfilled' ? searchRes.value?.tracks?.items || [] : [];
-  const topTracks = tracks
-    .filter(t => t.artists.some(a => a.id === artistId))
-    .slice(0, 5)
+  // ---- Top tracks ----
+  const trackItems = trackSearchRes.status === 'fulfilled'
+    ? trackSearchRes.value?.tracks?.items || [] : [];
+  const seenTrackNames = new Set();
+  const topTracks = trackItems
+    .filter(t => t.artists?.some(a => a.id === artistId))
+    .filter(t => {
+      const key = t.name.toLowerCase();
+      if (seenTrackNames.has(key)) return false;
+      seenTrackNames.add(key);
+      return true;
+    })
+    .slice(0, 10)
     .map(t => ({
       name: t.name,
       artist: t.artists.map(a => a.name).join(', '),
       artwork: t.album?.images?.[0]?.url || '',
       uri: t.uri,
       contextUri: t.album?.uri || '',
-      durationMs: t.duration_ms
+      durationMs: t.duration_ms,
+      previewUrl: t.preview_url || null
     }));
 
-  // Related artists from recommendations
-  const recsTracks = recsRes.status === 'fulfilled' ? recsRes.value?.tracks || [] : [];
-  const relatedArtists = recsTracks
-    .map(t => t.artists[0])
-    .filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i)
-    .filter(a => a.id !== artistId)
-    .map(a => ({ id: a.id, name: a.name, image: '', uri: a.uri }));
+  // ---- Discography ----
+  const albumItems = albumSearchRes.status === 'fulfilled'
+    ? albumSearchRes.value?.albums?.items || [] : [];
+  const albums = [];
+  const singles = [];
+  const seenIds = new Set();
+  albumItems
+    .filter(a => a.artists?.some(ar => ar.id === artistId))
+    .forEach(item => {
+      if (seenIds.has(item.id)) return;
+      seenIds.add(item.id);
+      const mapped = {
+        id: item.id,
+        name: item.name,
+        image: item.images?.[0]?.url || '',
+        uri: item.uri,
+        year: item.release_date?.slice(0, 4) || ''
+      };
+      if (item.album_type === 'album') albums.push(mapped);
+      else if (item.album_type === 'single') singles.push(mapped);
+    });
 
   state.artistData = {
     id: artist.id,
@@ -440,7 +465,7 @@ export async function fetchArtist(artistId) {
     albums,
     singles,
     appearsOn: [],
-    related: relatedArtists
+    related: []
   };
   return state.artistData;
 }

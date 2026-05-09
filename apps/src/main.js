@@ -4,25 +4,46 @@ import { loadToken, refreshToken, startAuth, handleCallback, loadVolume } from '
 import { fetchPlaylists, fetchHomeSections, initPlayer, togglePlayback, nextTrack, prevTrack, adjustVolume } from './api.js';
 import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding, updateNowPlaying, updateProgressBar, showVolumeToast, triggerHaptic } from './ui.js';
 
-// ============ Audio Unlock ============
+// ============ Debug: surface unhandled async errors ============
+// The Spotify SDK swallows our async callbacks (getOAuthToken etc.) and
+// re-throws as unhandled rejections. Without this they show only as cryptic
+// minified stack traces in the console.
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled rejection:', e.reason);
+});
+window.addEventListener('error', (e) => {
+  console.error('Window error:', e.message, e.error);
+});
 
-// R1 (Android WebView) requires a user gesture to route audio to hardware.
-// The Spotify SDK exposes activateElement() for exactly this purpose.
-let audioUnlocked = false;
-function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  // SDK method: must be called in a user-gesture handler
-  if (state.player) {
-    state.player.activateElement();
+// ============ Audio Unlock ============
+// Spotify Web Playback SDK plays audio inside a hidden iframe via EME/MSE.
+// On Android WebViews (R1), audio output requires the SDK's `activateElement()`
+// to be called inside a user-gesture handler. We call it on every gesture
+// until we're confident the player is connected, since the first gesture may
+// occur before the SDK finishes initialising.
+let audioActivated = false;
+function activateAudioOnGesture() {
+  if (audioActivated) return;
+  if (state.player && typeof state.player.activateElement === 'function') {
+    try {
+      const result = state.player.activateElement();
+      // activateElement returns a promise in newer SDK versions
+      if (result && typeof result.then === 'function') {
+        result.then(() => { audioActivated = true; }).catch(() => {});
+      } else {
+        audioActivated = true;
+      }
+    } catch (_) {}
   }
-  // Also prime the hardware audio path via HTMLAudioElement (works on R1 where
-  // Web Audio API alone may not route to speaker/BT)
-  const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
-  silent.play().catch(() => {});
+  // Prime hardware audio path via HTMLAudioElement (R1 reliably routes this
+  // to the speaker / BT, mirroring what the NTS app does).
+  try {
+    const silent = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA');
+    silent.play().catch(() => {});
+  } catch (_) {}
 }
-document.addEventListener('click', unlockAudio, { once: true });
-document.addEventListener('touchend', unlockAudio, { once: true });
+document.addEventListener('click', activateAudioOnGesture);
+document.addEventListener('touchend', activateAudioOnGesture);
 
 // ============ R1 Hardware Events ============
 
