@@ -370,16 +370,20 @@ export async function fetchArtist(artistId) {
   const artist = await api(`/artists/${artistId}`);
   if (!artist) return null;
 
-  // 2. BACKDOOR: Relaxed Search query to bypass the 403/400 restrictions
-  const query = encodeURIComponent(artist.name);
-  const searchRes = await api(`/search?q=${query}&type=track,album&limit=50`);
+  // 2. BACKDOOR: Safer search query with lower limit to bypass 400/403 restrictions
+  let searchRes = await api(`/search?q=${encodeURIComponent('artist:' + artist.name)}&type=track,album&limit=20`);
+  
+  // Fallback if the strict artist search still fails
+  if (!searchRes || searchRes.error) {
+    searchRes = await api(`/search?q=${encodeURIComponent(artist.name)}&type=track,album&limit=20`);
+  }
   
   const tracks = searchRes?.tracks?.items || [];
   const albumsList = searchRes?.albums?.items || [];
 
-  // Filter to ensure exact artist match
-  const topTracks = tracks.filter(t => t.artists.some(a => a.id === artistId)).slice(0, 5);
-  const exactAlbums = albumsList.filter(a => a.artists.some(a => a.id === artistId));
+  // Filter by ID or Name to catch collaborations
+  const topTracks = tracks.filter(t => t.artists.some(a => a.id === artistId || a.name === artist.name)).slice(0, 5);
+  const exactAlbums = albumsList.filter(a => a.artists.some(a => a.id === artistId || a.name === artist.name));
 
   state.artistData = {
     id: artist.id,
@@ -389,7 +393,7 @@ export async function fetchArtist(artistId) {
     uri: artist.uri,
     topTracks: topTracks.map(t => ({
       name: t.name,
-      artist: t.artists?.map(a => a.name).join(', ') || '',
+      artist: t.artists?.map(a => a.name).join(', '),
       artwork: t.album?.images?.[0]?.url || '',
       uri: t.uri,
       contextUri: t.album?.uri || '',

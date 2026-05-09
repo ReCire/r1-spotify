@@ -6,20 +6,20 @@ import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnb
 
 // ============ R1 Hardware Events ============
 
-window.addEventListener('scrollUp', () => handleScroll(-1));
-window.addEventListener('scrollDown', () => handleScroll(1));
+window.addEventListener('scrollUp', () => handleScroll(-1, true));
+window.addEventListener('scrollDown', () => handleScroll(1, true));
 
 let lastScrollTime = 0;
-const SCROLL_COOLDOWN = 120; // 120ms cooldown to prevent double-skips
+const SCROLL_COOLDOWN = 120; // 120ms cooldown for hardware wheel
 
-function handleScroll(dir) {
+function handleScroll(dir, isHardware = false) {
   const now = Date.now();
-  if (now - lastScrollTime < SCROLL_COOLDOWN) return;
-  lastScrollTime = now;
+  if (isHardware && now - lastScrollTime < SCROLL_COOLDOWN) return;
+  if (isHardware) lastScrollTime = now;
 
   if (state.currentView === 'nowplaying') {
     adjustVolume(dir * -0.05);
-    triggerHaptic(); // Optional bump when changing volume
+    triggerHaptic(); 
   } else {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
@@ -27,7 +27,6 @@ function handleScroll(dir) {
     const prevIndex = state.scrollIndex;
     state.scrollIndex = Math.max(0, Math.min(maxIdx, state.scrollIndex + dir));
 
-    // Only trigger haptic and scroll if the index actually moved
     if (prevIndex !== state.scrollIndex) {
       triggerHaptic();
       scrollFocusedIntoView();
@@ -86,10 +85,10 @@ document.addEventListener('touchmove', (e) => {
 
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      handleScroll(1);
+      handleScroll(1, false);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      handleScroll(-1);
+      handleScroll(-1, false);
       touchAccumulated += TOUCH_STEP_PX;
     }
   }
@@ -102,10 +101,10 @@ document.addEventListener('wheel', (e) => {
   touchAccumulated += e.deltaY;
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      handleScroll(1);
+      handleScroll(1, false);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      handleScroll(-1);
+      handleScroll(-1, false);
       touchAccumulated += TOUCH_STEP_PX;
     }
   }
