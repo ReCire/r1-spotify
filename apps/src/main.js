@@ -426,7 +426,7 @@ async function fetchPlaylistTracks(playlistId) {
       await refreshToken();
     }
     console.log('Fetching playlist tracks for:', playlistId, 'Token:', accessToken ? 'exists' : 'missing');
-    const data = await api(`/playlists/${playlistId}/tracks?limit=100&market=from_token`);
+    const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
     console.log('Playlist data:', data);
     if (data && data.items) {
       playlistTracks = data.items
@@ -451,13 +451,12 @@ async function fetchPlaylistTracks(playlistId) {
 
 async function fetchHomeSections() {
   try {
-    const [recentData, madeForData, topTracksData, topArtistsData, newReleasesData, categoriesData] = await Promise.all([
-      api('/me/player/recently-played?limit=1'),
-      api('/browse/featured-playlists?limit=1'),
-      api('/me/top/tracks?time_range=short_term&limit=1'),
-      api('/me/top/artists?time_range=medium_term&limit=1'),
-      api('/browse/new-releases?limit=1'),
-      api('/browse/categories?limit=20')
+    const [recentData, topTracksShort, topTracksLong, topArtistsData, savedAlbums] = await Promise.all([
+      api('/me/player/recently-played?limit=6'),
+      api('/me/top/tracks?time_range=short_term&limit=6'),
+      api('/me/top/tracks?time_range=long_term&limit=6'),
+      api('/me/top/artists?time_range=medium_term&limit=6'),
+      api('/me/albums?limit=6')
     ]);
 
     homeSections = [];
@@ -472,18 +471,8 @@ async function fetchHomeSections() {
       });
     }
 
-    if (madeForData?.playlists?.items?.length) {
-      const img = madeForData.playlists.items[0]?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Made For You', 
-        image: img,
-        categoryType: 'made-for-you',
-        contentType: 'music'
-      });
-    }
-
-    if (topTracksData?.items?.length) {
-      const img = topTracksData.items[0]?.album?.images?.[0]?.url || '';
+    if (topTracksShort?.items?.length) {
+      const img = topTracksShort.items[0]?.album?.images?.[0]?.url || '';
       homeSections.push({ 
         title: 'Jump Back In', 
         image: img,
@@ -502,33 +491,46 @@ async function fetchHomeSections() {
       });
     }
 
-    if (newReleasesData?.albums?.items?.length) {
-      const img = newReleasesData.albums.items[0]?.images?.[0]?.url || '';
+    if (topTracksLong?.items?.length) {
+      const img = topTracksLong.items[0]?.album?.images?.[0]?.url || '';
       homeSections.push({ 
-        title: 'New Releases', 
+        title: 'All-Time Favourites', 
         image: img,
-        categoryType: 'new-releases',
+        categoryType: 'all-time-favourites',
         contentType: 'music'
       });
     }
 
-    if (categoriesData?.categories?.items) {
-      categoriesData.categories.items.forEach(cat => {
-        homeSections.push({
-          title: cat.name,
-          image: cat.icons?.[0]?.url || '',
-          categoryType: 'browse-category',
-          categoryId: cat.id,
-          contentType: 'music'
-        });
+    if (savedAlbums?.items?.length) {
+      const img = savedAlbums.items[0]?.album?.images?.[0]?.url || '';
+      homeSections.push({ 
+        title: 'Saved Albums', 
+        image: img,
+        categoryType: 'saved-albums',
+        contentType: 'music'
       });
     }
 
     if (playlists.length) {
-      const img = playlists[0]?.image || '';
+      const madeForYou = playlists.filter(p => 
+        p.owner === 'Spotify' || 
+        p.name.toLowerCase().includes('daily mix') ||
+        p.name.toLowerCase().includes('discover') ||
+        p.name.toLowerCase().includes('release radar') ||
+        p.name.toLowerCase().includes('repeat')
+      );
+      if (madeForYou.length) {
+        homeSections.push({
+          title: 'Made For You',
+          image: madeForYou[0]?.image || '',
+          categoryType: 'made-for-you',
+          contentType: 'music'
+        });
+      }
+
       homeSections.push({ 
         title: 'Your Library', 
-        image: img,
+        image: playlists[0]?.image || '',
         categoryType: 'library',
         contentType: 'music'
       });
@@ -900,17 +902,20 @@ async function fetchSectionItems(categoryType) {
         break;
 
       case 'made-for-you':
-        data = await api('/browse/featured-playlists?limit=20');
-        if (data?.playlists?.items) {
-          currentSection.items = data.playlists.items.map(p => ({
-            name: p.name,
-            artist: p.owner?.display_name || 'Spotify',
-            image: p.images?.[0]?.url || '',
-            type: 'playlist',
-            uri: p.uri,
-            id: p.id
-          }));
-        }
+        currentSection.items = playlists.filter(p => 
+          p.owner === 'Spotify' || 
+          p.name.toLowerCase().includes('daily mix') ||
+          p.name.toLowerCase().includes('discover') ||
+          p.name.toLowerCase().includes('release radar') ||
+          p.name.toLowerCase().includes('repeat')
+        ).map(p => ({
+          name: p.name,
+          artist: p.owner || 'Spotify',
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }));
         break;
 
       case 'jump-back-in':
@@ -940,16 +945,29 @@ async function fetchSectionItems(categoryType) {
         }
         break;
 
-      case 'new-releases':
-        data = await api('/browse/new-releases?limit=20');
-        if (data?.albums?.items) {
-          currentSection.items = data.albums.items.map(a => ({
-            name: a.name,
-            artist: a.artists?.[0]?.name || '',
-            image: a.images?.[0]?.url || '',
+      case 'all-time-favourites':
+        data = await api('/me/top/tracks?time_range=long_term&limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(t => ({
+            name: t.name,
+            artist: t.artists?.[0]?.name || '',
+            image: t.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: t.uri
+          }));
+        }
+        break;
+
+      case 'saved-albums':
+        data = await api('/me/albums?limit=20');
+        if (data?.items) {
+          currentSection.items = data.items.map(item => ({
+            name: item.album.name,
+            artist: item.album.artists?.[0]?.name || '',
+            image: item.album.images?.[0]?.url || '',
             type: 'album',
-            uri: a.uri,
-            id: a.id
+            uri: item.album.uri,
+            id: item.album.id
           }));
         }
         break;
@@ -957,28 +975,12 @@ async function fetchSectionItems(categoryType) {
       case 'library':
         currentSection.items = playlists.map(p => ({
           name: p.name,
-          artist: `${p.tracks || 0} tracks`,
+          artist: `${p.trackCount || 0} tracks`,
           image: p.image,
           type: 'playlist',
           uri: p.uri,
           id: p.id
         }));
-        break;
-
-      case 'browse-category':
-        if (currentSection.categoryId) {
-          data = await api(`/browse/categories/${currentSection.categoryId}/playlists?limit=20`);
-          if (data?.playlists?.items) {
-            currentSection.items = data.playlists.items.map(p => ({
-              name: p.name,
-              artist: p.owner?.display_name || 'Spotify',
-              image: p.images?.[0]?.url || '',
-              type: 'playlist',
-              uri: p.uri,
-              id: p.id
-            }));
-          }
-        }
         break;
 
       default:
