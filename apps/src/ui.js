@@ -353,10 +353,8 @@ function renderArtist(app) {
   setTimeout(() => {
     document.getElementById('artist-back')?.addEventListener('click', goBack);
     document.getElementById('artist-play')?.addEventListener('click', () => {
-      if (state.artistData.topTracks.length) {
-        api('/me/player/play', { method: 'PUT', body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) }) });
-        navigate('nowplaying');
-      } else { showToast('No tracks found', 'warning'); }
+      playContext(state.artistData.uri);
+      navigate('nowplaying');
     });
   }, 0);
 
@@ -775,11 +773,11 @@ export function getListLength() {
   if (state.currentView === 'discography') {
     if (!state.artistData) return 0;
     let count = 0;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') count += state.artistData.topTracks.length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') count += state.artistData.albums.length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') count += state.artistData.singles.length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') count += (state.artistData.topTracks || []).length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') count += (state.artistData.albums || []).length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') count += (state.artistData.singles || []).length;
     if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') count += (state.artistData.appearsOn || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'related') count += state.artistData.related.length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'related') count += (state.artistData.related || []).length;
     return count;
   }
   return 0;

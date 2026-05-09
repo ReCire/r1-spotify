@@ -86,1722 +86,6 @@ README.md
 <files>
 This section contains the contents of the repository's files.
 
-<file path="apps/src/api.js">
-// Spotify R1 Player - API & Data Fetching
-import { state } from './state.js';
-import { refreshToken, saveToken, saveVolume } from './auth.js';
-import { showToast, updateNowPlaying, startProgressTimer } from './ui.js';
-
-// ============ Spotify API Helpers ============
-
-export async function api(endpoint, options = {}) {
-  if (Date.now() >= state.tokenExpiry - 60000) {
-    const refreshed = await refreshToken();
-    if (!refreshed) {
-      state.currentView = 'login';
-      render();
-      return null;
-    }
-  }
-
-  const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${state.accessToken}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }
-  });
-
-  if (res.status === 401) {
-    const refreshed = await refreshToken();
-    if (refreshed) return api(endpoint, options);
-    state.currentView = 'login';
-    render();
-    return null;
-  }
-
-  if (res.status === 204) return {};
-  if (!res.ok) return null;
-  return res.json();
-}
-
-// ============ Spotify Web Playback SDK ============
-
-// Define callback globally before SDK loads
-window.onSpotifyWebPlaybackSDKReady = () => {
-  if (state.accessToken && !state.player) {
-    createPlayer();
-  }
-};
-
-export function initPlayer() {
-  if (window.Spotify && state.accessToken && !state.player) {
-    createPlayer();
-  }
-}
-
-function createPlayer() {
-  if (state.player) return;
-
-  state.player = new Spotify.Player({
-    name: 'Rabbit R1',
-    getOAuthToken: async (cb) => {
-      if (Date.now() >= state.tokenExpiry - 60000) await refreshToken();
-      cb(state.accessToken);
-    },
-    volume: state.volume
-  });
-
-  state.player.addListener('ready', ({ device_id }) => {
-    state.deviceId = device_id;
-    transferPlayback(device_id);
-  });
-
-  state.player.addListener('not_ready', () => {
-    state.deviceId = null;
-  });
-
-  state.player.addListener('player_state_changed', (playerState) => {
-    if (!playerState) {
-      state.isPlaying = false;
-      state.currentTrack = null;
-      render();
-      return;
-    }
-
-    state.isPlaying = !playerState.paused;
-    state.progressMs = playerState.position;
-    state.durationMs = playerState.duration;
-
-    const track = playerState.track_window.current_track;
-    if (track) {
-      state.currentTrack = {
-        name: track.name,
-        artist: track.artists.map(a => a.name).join(', '),
-        album: track.album.name,
-        artwork: track.album.images[0]?.url || '',
-        uri: track.uri
-      };
-    }
-
-    updateNowPlaying();
-    startProgressTimer();
-  });
-
-  state.player.addListener('initialization_error', ({ message }) => {
-    showToast('Player init error', 'error');
-  });
-
-  state.player.addListener('authentication_error', ({ message }) => {
-    showToast('Auth expired', 'error');
-    state.currentView = 'login';
-    render();
-  });
-
-  state.player.connect();
-}
-
-async function transferPlayback(devId) {
-  await api('/me/player', {
-    method: 'PUT',
-    body: JSON.stringify({ device_ids: [devId], play: false })
-  });
-}
-
-// ============ Playback Controls ============
-
-export async function togglePlayback() {
-  if (!state.deviceId) {
-    showToast('No player connected', 'error');
-    return;
-  }
-  if (state.isPlaying) {
-    await api('/me/player/pause', { method: 'PUT' });
-  } else {
-    await api('/me/player/play', { method: 'PUT' });
-  }
-}
-
-export async function nextTrack() {
-  await api('/me/player/next', { method: 'POST' });
-}
-
-export async function prevTrack() {
-  await api('/me/player/previous', { method: 'POST' });
-}
-
-export async function playContext(contextUri, offset = 0) {
-  if (!state.deviceId) {
-    showToast('Connecting…', 'info');
-    return;
-  }
-  await api(`/me/player/play?device_id=${state.deviceId}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      context_uri: contextUri,
-      offset: { position: offset },
-      position_ms: 0
-    })
-  });
-}
-
-export async function playTrackInContext(contextUri, trackUri) {
-  if (!state.deviceId) {
-    showToast('Connecting…', 'info');
-    return;
-  }
-  const body = {};
-  if (contextUri && !contextUri.startsWith('spotify:track:')) {
-    body.context_uri = contextUri;
-    body.offset = { uri: trackUri };
-  } else {
-    body.uris = [trackUri];
-  }
-  body.position_ms = 0;
-  await api(`/me/player/play?device_id=${state.deviceId}`, {
-    method: 'PUT',
-    body: JSON.stringify(body)
-  });
-}
-
-export async function adjustVolume(delta) {
-  state.volume = Math.max(0, Math.min(1, state.volume + delta));
-  if (state.player) state.player.setVolume(state.volume);
-  saveVolume(state.volume);
-  showVolumeToast();
-}
-
-// ============ Data Fetching ============
-
-export async function fetchPlaylists() {
-  const data = await api('/me/playlists?limit=50');
-  if (data && data.items) {
-    state.playlists = data.items.map(p => ({
-      id: p.id,
-      name: p.name,
-      image: p.images?.[0]?.url || '',
-      uri: p.uri,
-      trackCount: p.tracks?.total || 0,
-      owner: p.owner?.display_name || ''
-    }));
-  }
-}
-
-export async function fetchPlaylistTracks(playlistId) {
-  try {
-    if (Date.now() >= state.tokenExpiry - 60000) {
-      await refreshToken();
-    }
-    console.log('Fetching playlist tracks for:', playlistId, 'Token:', state.accessToken ? 'exists' : 'missing');
-    const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
-    console.log('Playlist data:', data);
-    if (data && data.items) {
-      state.playlistTracks = data.items
-        .filter(item => item.track && item.track.uri)
-        .map(item => ({
-          name: item.track.name,
-          artist: item.track.artists?.map(a => a.name).join(', ') || '',
-          album: item.track.album?.name || '',
-          artwork: item.track.album?.images?.[0]?.url || '',
-          uri: item.track.uri,
-          durationMs: item.track.duration_ms
-        }));
-    } else {
-      state.playlistTracks = [];
-    }
-  } catch (err) {
-    console.error('Fetch playlist tracks error:', err);
-    showToast('Unable to load playlist. It may be private.', 'error');
-    state.playlistTracks = [];
-  }
-}
-
-export async function fetchHomeSections() {
-  try {
-    const [recentData, topTracksShort, topTracksLong, topArtistsData, savedAlbums, showsData, audiobooksData] = await Promise.all([
-      api('/me/player/recently-played?limit=6'),
-      api('/me/top/tracks?time_range=short_term&limit=6'),
-      api('/me/top/tracks?time_range=long_term&limit=6'),
-      api('/me/top/artists?time_range=medium_term&limit=6'),
-      api('/me/albums?limit=6'),
-      api('/me/shows?limit=6'),
-      api('/me/audiobooks?limit=6')
-    ]);
-
-    homeSections = [];
-
-    if (recentData?.items?.length) {
-      const img = recentData.items[0]?.track?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Recents', 
-        image: img,
-        categoryType: 'recents',
-        contentType: 'music'
-      });
-    }
-
-    if (topTracksShort?.items?.length) {
-      const img = topTracksShort.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Jump Back In', 
-        image: img,
-        categoryType: 'jump-back-in',
-        contentType: 'music'
-      });
-    }
-
-    if (topArtistsData?.items?.length) {
-      const img = topArtistsData.items[0]?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Your Top Artists', 
-        image: img,
-        categoryType: 'top-artists',
-        contentType: 'music'
-      });
-    }
-
-    if (topTracksLong?.items?.length) {
-      const img = topTracksLong.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'All-Time Favourites', 
-        image: img,
-        categoryType: 'all-time-favourites',
-        contentType: 'music'
-      });
-    }
-
-    if (savedAlbums?.items?.length) {
-      const img = savedAlbums.items[0]?.album?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Saved Albums', 
-        image: img,
-        categoryType: 'saved-albums',
-        contentType: 'music'
-      });
-    }
-
-    if (showsData?.items?.length) {
-      const img = showsData.items[0]?.show?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Your Podcasts', 
-        image: img,
-        categoryType: 'podcasts',
-        contentType: 'podcasts'
-      });
-    }
-
-    if (audiobooksData?.items?.length) {
-      const img = audiobooksData.items[0]?.images?.[0]?.url || '';
-      homeSections.push({ 
-        title: 'Your Audiobooks', 
-        image: img,
-        categoryType: 'audiobooks',
-        contentType: 'audiobooks'
-      });
-    }
-
-    if (state.playlists.length) {
-      const madeForYou = state.playlists.filter(p => 
-        p.owner === 'Spotify' || 
-        p.name.toLowerCase().includes('daily mix') ||
-        p.name.toLowerCase().includes('discover') ||
-        p.name.toLowerCase().includes('release radar') ||
-        p.name.toLowerCase().includes('repeat') ||
-        p.name.toLowerCase().includes('on repeat') ||
-        p.name.toLowerCase().includes('time capsule')
-      );
-      if (madeForYou.length) {
-        state.homeSections.push({
-          title: 'Made For You',
-          image: madeForYou[0]?.image || '',
-          categoryType: 'made-for-you',
-          contentType: 'music'
-        });
-      }
-
-      const dailyMixes = state.playlists.filter(p => 
-        p.name.toLowerCase().includes('daily mix')
-      );
-      if (dailyMixes.length) {
-        state.homeSections.push({
-          title: 'Daily Mixes',
-          image: dailyMixes[0]?.image || '',
-          categoryType: 'daily-mixes',
-          contentType: 'music'
-        });
-      }
-
-      state.homeSections.push({ 
-        title: 'Your Library', 
-        image: state.playlists[0]?.image || '',
-        categoryType: 'library',
-        contentType: 'music'
-      });
-    }
-  } catch (err) {
-    console.error('Home sections error:', err);
-    state.homeSections = [];
-  }
-}
-
-export async function fetchArtist(artistId) {
-  const [artist, topTracks, albumsData, related] = await Promise.all([
-    api(`/artists/${artistId}`),
-    api(`/artists/${artistId}/top-tracks?market=from_token`),
-    api(`/artists/${artistId}/albums?limit=50`),
-    api(`/artists/${artistId}/related-artists`).catch(() => null)
-  ]);
-
-  if (!artist) return null;
-
-  state.artistData = {
-    id: artist.id,
-    name: artist.name,
-    image: artist.images?.[0]?.url || '',
-    followers: artist.followers?.total || 0,
-    genres: artist.genres || [],
-    popularity: artist.popularity || 0,
-    uri: artist.uri,
-    topTracks: (topTracks?.tracks || []).slice(0, 5).map(t => ({
-      name: t.name,
-      artist: t.artists?.map(a => a.name).join(', ') || '',
-      artwork: t.album?.images?.[0]?.url || '',
-      uri: t.uri,
-      contextUri: t.album?.uri || '',
-      durationMs: t.duration_ms
-    })),
-    albums: (albumsData?.items || []).filter(a => a.album_type === 'album').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'album'
-    })),
-    singles: (albumsData?.items || []).filter(a => a.album_type === 'single').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'single'
-    })),
-    appearsOn: (albumsData?.items || []).filter(a => a.album_group === 'appears_on').slice(0, 20).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      year: a.release_date?.substring(0, 4) || '', type: 'appears_on'
-    })),
-    related: (related?.artists || []).slice(0, 10).map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri,
-      followers: a.followers?.total || 0
-    }))
-  };
-  return state.artistData;
-}
-
-export async function fetchAlbumTracks(albumId) {
-  const data = await api(`/albums/${albumId}`);
-  if (data) {
-    state.selectedAlbum = {
-      id: data.id,
-      name: data.name,
-      image: data.images?.[0]?.url || '',
-      artist: data.artists?.map(a => a.name).join(', ') || '',
-      uri: data.uri,
-      year: data.release_date?.substring(0, 4) || ''
-    };
-    state.albumTracks = (data.tracks?.items || []).map(t => ({
-      name: t.name,
-      artist: t.artists?.map(a => a.name).join(', ') || '',
-      uri: t.uri,
-      durationMs: t.duration_ms,
-      artwork: data.images?.[0]?.url || ''
-    }));
-  }
-}
-
-export async function searchSpotify(query) {
-  if (!query.trim()) { state.searchResults = []; return; }
-  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=5`);
-  if (!data) return;
-
-  state.searchResults = [];
-  if (data.artists?.items) {
-    data.artists.items.forEach(a => {
-      state.searchResults.push({
-        type: 'Artist', name: a.name, subtitle: '',
-        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
-      });
-    });
-  }
-  if (data.albums?.items) {
-    data.albums.items.forEach(a => {
-      state.searchResults.push({
-        type: 'Album', name: a.name, subtitle: a.artists?.[0]?.name || '',
-        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
-      });
-    });
-  }
-  if (data.tracks?.items) {
-    data.tracks.items.forEach(t => {
-      state.searchResults.push({
-        type: 'Song', name: t.name,
-        subtitle: t.artists?.map(a => a.name).join(', ') || '',
-        artwork: t.album?.images?.[0]?.url || '',
-        uri: t.uri, contextUri: t.album?.uri || ''
-      });
-    });
-  }
-  if (data.playlists?.items) {
-    data.playlists.items.filter(Boolean).forEach(p => {
-      state.searchResults.push({
-        type: 'Playlist', name: p.name, subtitle: p.owner?.display_name || '',
-        artwork: p.images?.[0]?.url || '', uri: p.uri, id: p.id
-      });
-    });
-  }
-}
-
-export function formatFollowers(n) {
-  if (!n || n === 0) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'K';
-  return n.toString();
-}
-
-// ============ Progress Timer ============
-
-export function startProgressTimer() {
-  stopProgressTimer();
-  if (!state.isPlaying) return;
-  state.progressInterval = setInterval(() => {
-    if (state.isPlaying) {
-      state.progressMs += 500;
-      if (state.progressMs > state.durationMs) state.progressMs = state.durationMs;
-      updateProgressBar();
-    }
-  }, 500);
-}
-
-export function stopProgressTimer() {
-  if (state.progressInterval) { clearInterval(state.progressInterval); state.progressInterval = null; }
-}
-
-function updateProgressBar() {
-  const bar = document.querySelector('.progress-fill');
-  if (bar && state.durationMs > 0) {
-    bar.style.width = `${(state.progressMs / state.durationMs) * 100}%`;
-  }
-  const timeEl = document.querySelector('.track-time');
-  if (timeEl) {
-    timeEl.textContent = `${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}`;
-  }
-}
-
-function formatTime(ms) {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function showVolumeToast() {
-  let toast = document.querySelector('.volume-toast');
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.className = 'volume-toast';
-    document.getElementById('app').appendChild(toast);
-  }
-  toast.innerHTML = `
-    <div class="vol-track-sm"><div class="vol-fill-sm" style="width:${state.volume * 100}%"></div></div>
-    <span class="vol-pct-sm">${Math.round(state.volume * 100)}%</span>
-  `;
-  toast.classList.add('visible');
-
-  if (volumeToastTimeout) clearTimeout(volumeToastTimeout);
-  volumeToastTimeout = setTimeout(() => toast.classList.remove('visible'), 1200);
-}
-
-let volumeToastTimeout = null;
-</file>
-
-<file path="apps/src/auth.js">
-// Spotify R1 Player - Authentication
-import { CONFIG, state } from './state.js';
-
-// ============ Storage (R1 creationStorage or localStorage) ============
-
-export async function saveToken(token, expiry, refresh) {
-  const data = JSON.stringify({ token, expiry, refresh });
-  if (window.creationStorage) {
-    try { await window.creationStorage.plain.setItem('spotify_auth', btoa(data)); } catch (e) {}
-  } else {
-    localStorage.setItem('spotify_auth', data);
-  }
-}
-
-export async function loadToken() {
-  let raw;
-  if (window.creationStorage) {
-    try {
-      const stored = await window.creationStorage.plain.getItem('spotify_auth');
-      if (stored) raw = atob(stored);
-    } catch (e) {}
-  } else {
-    raw = localStorage.getItem('spotify_auth');
-  }
-  if (raw) {
-    try {
-      const { token, expiry, refresh } = JSON.parse(raw);
-      return { token, expiry, refresh };
-    } catch (e) {}
-  }
-  return null;
-}
-
-export async function clearToken() {
-  if (window.creationStorage) {
-    try { await window.creationStorage.plain.removeItem('spotify_auth'); } catch (e) {}
-  } else {
-    localStorage.removeItem('spotify_auth');
-  }
-}
-
-export async function saveVolume(vol) {
-  if (window.creationStorage) {
-    try { await window.creationStorage.plain.setItem('spotify_vol', btoa(JSON.stringify(vol))); } catch (e) {}
-  } else {
-    localStorage.setItem('spotify_vol', JSON.stringify(vol));
-  }
-}
-
-export async function loadVolume() {
-  if (window.creationStorage) {
-    try {
-      const s = await window.creationStorage.plain.getItem('spotify_vol');
-      if (s) return JSON.parse(atob(s));
-    } catch (e) {}
-  } else {
-    const s = localStorage.getItem('spotify_vol');
-    if (s) return JSON.parse(s);
-  }
-  return 0.7;
-}
-
-// ============ OAuth 2.0 PKCE ============
-
-function generateRandomString(length) {
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return values.reduce((acc, x) => acc + possible[x % possible.length], '');
-}
-
-async function sha256(plain) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plain);
-  return window.crypto.subtle.digest('SHA-256', data);
-}
-
-function base64encode(input) {
-  return btoa(String.fromCharCode(...new Uint8Array(input)))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-
-export async function startAuth() {
-  if (!CONFIG.clientId) {
-    showToast('Set Client ID in config', 'error');
-    return;
-  }
-
-  const codeVerifier = generateRandomString(64);
-  sessionStorage.setItem('code_verifier', codeVerifier);
-
-  const hashed = await sha256(codeVerifier);
-  const codeChallenge = base64encode(hashed);
-
-  const oauthState = generateRandomString(16);
-  sessionStorage.setItem('auth_state', oauthState);
-
-  const params = new URLSearchParams({
-    response_type: 'code',
-    client_id: CONFIG.clientId,
-    scope: CONFIG.scopes,
-    code_challenge_method: 'S256',
-    code_challenge: codeChallenge,
-    redirect_uri: CONFIG.redirectUri,
-    state: oauthState
-  });
-
-  window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
-}
-
-export async function handleCallback() {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get('code');
-  const oauthState = params.get('state');
-
-  if (!code) return false;
-
-  const storedState = sessionStorage.getItem('auth_state');
-  if (oauthState !== storedState) {
-    showToast('Auth state mismatch', 'error');
-    return false;
-  }
-
-  const codeVerifier = sessionStorage.getItem('code_verifier');
-
-  const body = new URLSearchParams({
-    client_id: CONFIG.clientId,
-    grant_type: 'authorization_code',
-    code: code,
-    redirect_uri: CONFIG.redirectUri,
-    code_verifier: codeVerifier
-  });
-
-  try {
-    const res = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body
-    });
-
-    if (!res.ok) throw new Error('Token exchange failed');
-    const data = await res.json();
-
-    state.accessToken = data.access_token;
-    state.tokenExpiry = Date.now() + data.expires_in * 1000;
-    await saveToken(state.accessToken, state.tokenExpiry, data.refresh_token || '');
-
-    window.history.replaceState({}, document.title, window.location.pathname);
-    sessionStorage.removeItem('code_verifier');
-    sessionStorage.removeItem('auth_state');
-    return true;
-  } catch (e) {
-    showToast('Login failed', 'error');
-    return false;
-  }
-}
-
-export async function refreshToken() {
-  const stored = await loadToken();
-  if (!stored || !stored.refresh) return false;
-
-  const body = new URLSearchParams({
-    client_id: CONFIG.clientId,
-    grant_type: 'refresh_token',
-    refresh_token: stored.refresh
-  });
-
-  try {
-    const res = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    state.accessToken = data.access_token;
-    state.tokenExpiry = Date.now() + data.expires_in * 1000;
-    await saveToken(state.accessToken, state.tokenExpiry, data.refresh_token || stored.refresh);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-// Temporary showToast for auth module - will be moved to ui.js
-function showToast(msg, type = 'info') {
-  let el = document.querySelector('.toast');
-  if (el) el.remove();
-  el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.textContent = msg;
-  document.getElementById('app').appendChild(el);
-  setTimeout(() => { if (el.parentNode) el.remove(); }, type === 'error' ? 4000 : 2500);
-}
-</file>
-
-<file path="apps/src/state.js">
-// Spotify R1 Player - State Management
-// ============ Configuration ============
-
-export const CONFIG = {
-  clientId: '8ef09899795a4fdab465bfa82c97c534',
-  redirectUri: `${window.location.origin}/callback.html`,
-  scopes: [
-    'streaming',
-    'user-read-email',
-    'user-read-private',
-    'user-read-playback-state',
-    'user-modify-playback-state',
-    'user-read-currently-playing',
-    'user-read-recently-played',
-    'user-library-read',
-    'user-follow-read',
-    'user-follow-modify',
-    'user-top-read',
-    'playlist-read-private',
-    'playlist-read-collaborative'
-  ].join(' ')
-};
-
-// ============ State ============
-
-export const state = {
-  accessToken: null,
-  tokenExpiry: 0,
-  player: null,
-  deviceId: null,
-  currentView: 'login',
-  isPlaying: false,
-  currentTrack: null,
-  progressMs: 0,
-  durationMs: 0,
-  volume: 0.7,
-  playlists: [],
-  playlistTracks: [],
-  searchResults: [],
-  scrollIndex: 0,
-  selectedPlaylist: null,
-  progressInterval: null,
-  viewStack: [],
-  homeSections: [],
-  homeFilter: 'all',
-  sectionFilter: 'all',
-  discographyFilter: 'all',
-  artistData: null,
-  artistDiscography: null,
-  albumTracks: [],
-  selectedAlbum: null,
-  onboardingShown: false,
-  currentSection: null
-};
-</file>
-
-<file path="apps/src/ui.js">
-// Spotify R1 Player - UI Rendering
-import { state } from './state.js';
-import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks } from './api.js';
-
-// ============ Main Render ============
-
-export function render() {
-  const app = document.getElementById('app');
-  app.innerHTML = '';
-
-  switch (state.currentView) {
-    case 'login': renderLogin(app); break;
-    case 'home': renderHome(app); break;
-    case 'section': renderSection(app); break;
-    case 'playlist': renderPlaylist(app); break;
-    case 'album': renderAlbum(app); break;
-    case 'nowplaying': renderNowPlaying(app); break;
-    case 'search': renderSearch(app); break;
-    case 'artist': renderArtist(app); break;
-    case 'discography': renderDiscography(app); break;
-  }
-}
-
-// ============ Login View ============
-
-function renderLogin(app) {
-  app.innerHTML = `
-    <div class="view-login">
-      <div class="login-logo">${spotifyLogo()}</div>
-      <div class="login-title">Spotify</div>
-      <div class="login-subtitle">Connect your account to play music on your R1</div>
-      <button class="login-btn" id="login-btn">Log in with Spotify</button>
-      <div class="login-hint">Requires Spotify Premium</div>
-    </div>
-  `;
-  document.getElementById('login-btn').addEventListener('click', startAuth);
-}
-
-// ============ Onboarding Overlay ============
-
-function showOnboarding() {
-  if (state.onboardingShown) return;
-  state.onboardingShown = true;
-  try { localStorage.setItem('spotify_onboarded', '1'); } catch (e) {}
-
-  const overlay = document.createElement('div');
-  overlay.className = 'onboarding-overlay';
-  overlay.innerHTML = `
-    <div class="onboard-content">
-      <div class="onboard-title">Controls</div>
-      <div class="onboard-row"><span class="onboard-icon">${swipeRightIcon()}</span><span>Swipe right — go back</span></div>
-      <div class="onboard-row"><span class="onboard-icon">${swipeLeftIcon()}</span><span>Swipe left — search</span></div>
-      <div class="onboard-row"><span class="onboard-icon">${scrollIcon()}</span><span>Scroll — browse / volume</span></div>
-      <div class="onboard-row"><span class="onboard-icon">${tapIcon()}</span><span>Tap — select</span></div>
-      <div class="onboard-dismiss">Tap anywhere to start</div>
-    </div>
-  `;
-  overlay.addEventListener('click', () => overlay.remove());
-  document.getElementById('app').appendChild(overlay);
-  setTimeout(() => overlay.remove(), 6000);
-}
-
-// ============ Home View (Category Cards - full width stacked) ============
-
-function renderHome(app) {
-  const header = createHeader('Home', true);
-  app.appendChild(header);
-
-  const filterBar = document.createElement('div');
-  filterBar.className = 'filter-bar';
-  filterBar.innerHTML = `
-    <button class="filter-btn ${state.homeFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
-    <button class="filter-btn ${state.homeFilter === 'music' ? 'active' : ''}" data-filter="music">Music</button>
-    <button class="filter-btn ${state.homeFilter === 'podcasts' ? 'active' : ''}" data-filter="podcasts">Podcasts</button>
-    <button class="filter-btn ${state.homeFilter === 'audiobooks' ? 'active' : ''}" data-filter="audiobooks">Audiobooks</button>
-  `;
-  filterBar.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.homeFilter = btn.dataset.filter;
-      render();
-    });
-  });
-  app.appendChild(filterBar);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  const filteredSections = state.homeFilter === 'all' 
-    ? state.homeSections 
-    : state.homeSections.filter(s => s.contentType === state.homeFilter);
-
-  if (filteredSections.length === 0) {
-    container.innerHTML = `<div class="empty-state">No content</div>`;
-  } else {
-    filteredSections.forEach((section, i) => {
-      const card = document.createElement('div');
-      card.className = `cat-card ${i === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i;
-      card.style.backgroundImage = `url('${section.image}')`;
-      card.innerHTML = `
-        <div class="cat-card-overlay"></div>
-        <div class="cat-card-content">
-          <span class="cat-card-title">${section.title}</span>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => openSection(section));
-      container.appendChild(card);
-    });
-  }
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-// ============ Section View (Content Cards - items within a category) ============
-
-function renderSection(app) {
-  if (!state.currentSection) { goBack(); return; }
-
-  const header = createHeader(state.currentSection.title, true);
-  app.appendChild(header);
-
-  if (state.currentSection.hasFilters && state.currentSection.filterOptions) {
-    const filterBar = document.createElement('div');
-    filterBar.className = 'filter-bar';
-    state.currentSection.filterOptions.forEach(f => {
-      const btn = document.createElement('button');
-      btn.className = `filter-btn ${state.sectionFilter === f ? 'active' : ''}`;
-      btn.textContent = capitalize(f);
-      btn.addEventListener('click', () => {
-        state.sectionFilter = f;
-        state.scrollIndex = 0;
-        render();
-      });
-      filterBar.appendChild(btn);
-    });
-    app.appendChild(filterBar);
-  }
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  let items = state.currentSection.items;
-  if (state.currentSection.hasFilters && state.sectionFilter !== 'all') {
-    items = items.filter(item => item.filterType === state.sectionFilter);
-  }
-
-  if (items.length === 0) {
-    container.innerHTML = `<div class="empty-state">Loading…</div>`;
-  } else {
-    items.forEach((item, i) => {
-      const card = document.createElement('div');
-      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i;
-      card.style.backgroundImage = `url('${item.image}')`;
-      
-      let typeLabel = capitalize(item.type);
-      let sublabel = '';
-      if (item.type === 'artist') {
-        sublabel = '';
-      } else if (item.artist) {
-        sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 20)}</span>`;
-      } else {
-        sublabel = `<span>${typeLabel}</span>`;
-      }
-      
-      card.innerHTML = `
-        <div class="content-card-overlay"></div>
-        <div class="content-card-content">
-          <div class="content-card-labels">
-            <div class="content-card-name">${truncate(item.name, 26)}</div>
-            ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
-          </div>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => handleContentCardClick(item));
-      container.appendChild(card);
-    });
-  }
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-function handleContentCardClick(item) {
-  if (item.type === 'playlist') {
-    openPlaylistById(item.id, item.name, item.uri);
-  } else if (item.type === 'artist') {
-    openArtist(item.id);
-  } else if (item.type === 'album') {
-    openAlbum(item.id);
-  } else if (item.type === 'track') {
-    playTrackInContext(item.contextUri || item.uri, item.uri);
-    navigate('nowplaying');
-  }
-}
-
-async function openSection(section) {
-  state.currentSection = { 
-    title: section.title, 
-    items: [], 
-    categoryType: section.categoryType,
-    categoryId: section.categoryId
-  };
-  navigate('section');
-  await fetchSectionItems(section.categoryType);
-  if (state.currentView === 'section') render();
-}
-
-// ============ Playlist View (Content Cards) ============
-
-function renderPlaylist(app) {
-  const header = createHeader(truncate(state.selectedPlaylist?.name || 'Playlist', 18), false);
-  app.appendChild(header);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  if (state.playlistTracks.length === 0) {
-    container.innerHTML = `<div class="empty-state">Loading tracks…</div>`;
-  } else {
-    state.playlistTracks.forEach((track, i) => {
-      const card = document.createElement('div');
-      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i;
-      card.style.backgroundImage = `url('${track.artwork}')`;
-      card.innerHTML = `
-        <div class="content-card-overlay"></div>
-        <div class="content-card-content">
-          <div class="content-card-labels">
-            <div class="content-card-name">${truncate(track.name, 26)}</div>
-            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
-          </div>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => {
-        playTrackInContext(state.selectedPlaylist.uri, track.uri);
-        navigate('nowplaying');
-      });
-      container.appendChild(card);
-    });
-  }
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-// ============ Album View (Content Cards) ============
-
-function renderAlbum(app) {
-  const header = createHeader(truncate(state.selectedAlbum?.name || 'Album', 18), false);
-  app.appendChild(header);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  if (state.albumTracks.length === 0) {
-    container.innerHTML = `<div class="empty-state">Loading…</div>`;
-  } else {
-    state.albumTracks.forEach((track, i) => {
-      const card = document.createElement('div');
-      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i;
-      card.style.backgroundImage = `url('${track.artwork}')`;
-      card.innerHTML = `
-        <div class="content-card-overlay"></div>
-        <div class="content-card-content">
-          <div class="content-card-labels">
-            <div class="content-card-name">${truncate(track.name, 26)}</div>
-            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
-          </div>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => {
-        playContext(state.selectedAlbum.uri, i);
-        navigate('nowplaying');
-      });
-      container.appendChild(card);
-    });
-  }
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-// ============ Artist View ============
-
-function renderArtist(app) {
-  if (!state.artistData) { app.innerHTML = `<div class="empty-state">Loading…</div>`; return; }
-
-  const container = document.createElement('div');
-  container.className = 'artist-view';
-  container.id = 'list-container';
-
-  container.innerHTML = `
-    <div class="artist-hero" style="background-image:url('${state.artistData.image}')">
-      <div class="artist-hero-overlay">
-        <button class="artist-back" id="artist-back">${chevronLeft()}</button>
-        <div class="artist-hero-bottom">
-          <div class="artist-name">${state.artistData.name}</div>
-          <div class="artist-stats">${formatFollowers(state.artistData.followers)} listeners</div>
-          <div class="artist-actions">
-            <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
-            <button class="artist-follow-btn" id="artist-follow">${followIcon()} Follow</button>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="artist-explore">
-      <div class="artist-expand" id="artist-expand">
-        <span>Discography</span>${chevronDown()}
-      </div>
-    </div>
-  `;
-
-  app.appendChild(container);
-
-  setTimeout(() => {
-    document.getElementById('artist-back')?.addEventListener('click', goBack);
-    document.getElementById('artist-play')?.addEventListener('click', () => {
-      if (state.artistData.topTracks.length) {
-        api('/me/player/play', {
-          method: 'PUT',
-          body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) })
-        });
-        navigate('nowplaying');
-      }
-    });
-    document.getElementById('artist-follow')?.addEventListener('click', async () => {
-      await api(`/me/following?type=artist&ids=${state.artistData.id}`, { method: 'PUT' });
-      showToast('Following ' + state.artistData.name, 'info');
-    });
-    document.getElementById('artist-expand')?.addEventListener('click', () => {
-      navigate('discography');
-    });
-  }, 0);
-
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-}
-
-// ============ Discography View (Content Cards) ============
-
-function renderDiscography(app) {
-  if (!state.artistData) { goBack(); return; }
-
-  const header = createHeader(truncate(state.artistData.name, 16), true);
-  app.appendChild(header);
-
-  const filterBar = document.createElement('div');
-  filterBar.className = 'filter-bar';
-  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
-  filters.forEach(f => {
-    const btn = document.createElement('button');
-    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
-    btn.textContent = capitalize(f);
-    btn.addEventListener('click', () => {
-      state.discographyFilter = f;
-      state.scrollIndex = 0;
-      render();
-    });
-    filterBar.appendChild(btn);
-  });
-  app.appendChild(filterBar);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  let allItems = [];
-
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') {
-    state.artistData.topTracks.forEach(t => {
-      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
-    state.artistData.albums.forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
-    state.artistData.singles.forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') {
-    (state.artistData.appearsOn || []).forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'related') {
-    state.artistData.related.forEach(a => {
-      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
-    });
-  }
-
-  allItems.forEach((item, i) => {
-    const card = document.createElement('div');
-    card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = i;
-    card.style.backgroundImage = `url('${item.image}')`;
-
-    let typeLabel = capitalize(item.type);
-    let sublabel = '';
-    if (item.type === 'artist') {
-      sublabel = '';
-    } else if (item.artist) {
-      sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
-    } else {
-      sublabel = `<span>${typeLabel}</span>`;
-    }
-
-    card.innerHTML = `
-      <div class="content-card-overlay"></div>
-      <div class="content-card-content">
-        <div class="content-card-labels">
-          <div class="content-card-name">${truncate(item.name, 26)}</div>
-          ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
-        </div>
-        ${chevronRight()}
-      </div>
-    `;
-    card.addEventListener('click', () => handleContentCardClick(item));
-    container.appendChild(card);
-  });
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-  scrollFocusedIntoView();
-}
-
-// ============ Now Playing View ============
-
-function renderNowPlaying(app) {
-  const track = state.currentTrack || { name: 'Not playing', artist: '', album: '', artwork: '' };
-
-  app.innerHTML = `
-    <div class="view-nowplaying">
-      <div class="np-header">
-        <button class="np-back" id="np-back">${chevronDown()}</button>
-        <div class="np-context">Now Playing</div>
-      </div>
-      <div class="np-artwork">
-        ${track.artwork ? `<img src="${track.artwork}" alt="">` : `<div class="np-artwork-placeholder">${noteIcon()}</div>`}
-      </div>
-      <div class="np-track-info">
-        <div class="np-track-name">${truncate(track.name, 26)}</div>
-        <div class="np-track-artist">${truncate(track.artist, 30)}</div>
-      </div>
-      <div class="np-progress">
-        <div class="progress-track"><div class="progress-fill" style="width:${state.durationMs ? (state.progressMs / state.durationMs * 100) : 0}%"></div></div>
-        <div class="track-time">${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}</div>
-      </div>
-      <div class="np-controls">
-        <button class="ctrl-btn" id="ctrl-prev">${prevIcon()}</button>
-        <button class="ctrl-btn ctrl-play" id="ctrl-play">${state.isPlaying ? pauseIcon() : playIcon()}</button>
-        <button class="ctrl-btn" id="ctrl-next">${nextIcon()}</button>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('np-back').addEventListener('click', goBack);
-  document.getElementById('ctrl-prev').addEventListener('click', prevTrack);
-  document.getElementById('ctrl-play').addEventListener('click', togglePlayback);
-  document.getElementById('ctrl-next').addEventListener('click', nextTrack);
-}
-
-export function updateNowPlaying() {
-  if (state.currentView === 'nowplaying') {
-    const nameEl = document.querySelector('.np-track-name');
-    const artistEl = document.querySelector('.np-track-artist');
-    const artEl = document.querySelector('.np-artwork img');
-    const playBtn = document.getElementById('ctrl-play');
-
-    if (nameEl && state.currentTrack) nameEl.textContent = truncate(state.currentTrack.name, 26);
-    if (artistEl && state.currentTrack) artistEl.textContent = truncate(state.currentTrack.artist, 30);
-    if (artEl && state.currentTrack?.artwork) artEl.src = state.currentTrack.artwork;
-    if (playBtn) playBtn.innerHTML = state.isPlaying ? pauseIcon() : playIcon();
-    updateProgressBar();
-  } else {
-    const mini = document.querySelector('.mini-player');
-    if (mini && state.currentTrack) {
-      mini.querySelector('.mini-name').textContent = truncate(state.currentTrack.name, 18);
-      const indicator = mini.querySelector('.mini-indicator');
-      if (indicator) indicator.textContent = state.isPlaying ? 'PLAYING' : 'PAUSED';
-    }
-  }
-}
-
-// ============ Search View (Content Cards) ============
-
-function renderSearch(app) {
-  const header = createHeader('Search', false);
-  app.appendChild(header);
-
-  const searchBox = document.createElement('div');
-  searchBox.className = 'search-box';
-  searchBox.innerHTML = `<input type="text" class="search-input" id="search-input" placeholder="What do you want to play?" autocomplete="off">`;
-  app.appendChild(searchBox);
-
-  const container = document.createElement('div');
-  container.className = 'list-container';
-  if (state.currentTrack) container.classList.add('with-player');
-  container.id = 'list-container';
-
-  if (state.searchResults.length === 0) {
-    container.innerHTML = `<div class="empty-state">Type to search</div>`;
-  } else {
-    updateSearchCards(container);
-  }
-
-  app.appendChild(container);
-  if (state.currentTrack) app.appendChild(createMiniPlayer());
-
-  const input = document.getElementById('search-input');
-  input.focus();
-  let searchTimeout;
-  input.addEventListener('input', () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(async () => {
-      state.scrollIndex = 0;
-      await searchSpotify(input.value);
-      const listEl = document.getElementById('list-container');
-      if (listEl) {
-        if (state.searchResults.length) {
-          updateSearchCards(listEl);
-        } else if (input.value) {
-          listEl.innerHTML = `<div class="empty-state">No results</div>`;
-        } else {
-          listEl.innerHTML = `<div class="empty-state">Type to search</div>`;
-        }
-      }
-    }, 350);
-  });
-
-  scrollFocusedIntoView();
-}
-
-export function updateSearchCards(container) {
-  const existingCards = container.querySelectorAll('.content-card');
-  
-  // If the count doesn't match, fallback to standard render (innerHTML rebuild)
-  if (existingCards.length !== state.searchResults.length) {
-    container.innerHTML = '';
-    if (state.searchResults.length === 0) {
-       container.innerHTML = `<div class="empty-state">No results</div>`;
-       return;
-    }
-    state.searchResults.forEach((item, i) => {
-      const card = document.createElement('div');
-      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i;
-      card.style.backgroundImage = `url('${item.artwork}')`;
-      card.innerHTML = `
-        <div class="content-card-overlay"></div>
-        <div class="content-card-content">
-          <div class="content-card-labels">
-            <div class="content-card-name">${item.name}</div>
-            <div class="content-card-sub">
-              ${item.subtitle ? `<span>${item.type}</span><span class="dot">·</span><span>${item.subtitle}</span>` : `<span>${item.type}</span>`}
-            </div>
-          </div>
-          ${chevronRight()}
-        </div>
-      `;
-      card.addEventListener('click', () => handleSearchItemClick(item));
-      container.appendChild(card);
-    });
-    return;
-  }
-
-  // High performance path: Recycle existing DOM nodes
-  state.searchResults.forEach((item, i) => {
-    const card = existingCards[i];
-    card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
-    card.dataset.idx = i;
-    card.style.backgroundImage = `url('${item.artwork}')`;
-    card.querySelector('.content-card-name').textContent = item.name;
-    
-    const subEl = card.querySelector('.content-card-sub');
-    subEl.innerHTML = item.subtitle 
-      ? `<span>${item.type}</span><span class="dot">·</span><span>${item.subtitle}</span>` 
-      : `<span>${item.type}</span>`;
-      
-    card.onclick = () => handleSearchItemClick(state.searchResults[i]);
-  });
-}
-
-function handleSearchItemClick(item) {
-  if (item.type === 'Artist') {
-    openArtist(item.id);
-  } else if (item.type === 'Album') {
-    openAlbum(item.id);
-  } else if (item.type === 'Playlist') {
-    openPlaylistById(item.id, item.name, item.uri);
-  } else if (item.type === 'Song') {
-    playTrackInContext(item.contextUri || item.uri, item.uri);
-    navigate('nowplaying');
-  }
-}
-
-async function searchSpotify(query) {
-  if (!query.trim()) { state.searchResults = []; return; }
-  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=5`);
-  if (!data) return;
-
-  state.searchResults = [];
-  if (data.artists?.items) {
-    data.artists.items.forEach(a => {
-      state.searchResults.push({
-        type: 'Artist', name: a.name, subtitle: '',
-        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
-      });
-    });
-  }
-  if (data.albums?.items) {
-    data.albums.items.forEach(a => {
-      state.searchResults.push({
-        type: 'Album', name: a.name, subtitle: a.artists?.[0]?.name || '',
-        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
-      });
-    });
-  }
-  if (data.tracks?.items) {
-    data.tracks.items.forEach(t => {
-      state.searchResults.push({
-        type: 'Song', name: t.name,
-        subtitle: t.artists?.map(a => a.name).join(', ') || '',
-        artwork: t.album?.images?.[0]?.url || '',
-        uri: t.uri, contextUri: t.album?.uri || ''
-      });
-    });
-  }
-  if (data.playlists?.items) {
-    data.playlists.items.filter(Boolean).forEach(p => {
-      state.searchResults.push({
-        type: 'Playlist', name: p.name, subtitle: p.owner?.display_name || '',
-        artwork: p.images?.[0]?.url || '', uri: p.uri, id: p.id
-      });
-    });
-  }
-}
-
-// ============ Shared Components ============
-
-function createHeader(title, showSearch) {
-  const header = document.createElement('div');
-  header.className = 'header';
-
-  let leftBtn = '';
-  if (state.viewStack.length > 0) {
-    leftBtn = `<button class="header-btn back-btn" id="header-back">${chevronLeft()}</button>`;
-  } else {
-    leftBtn = `<div class="header-logo">${spotifyIcon()}</div>`;
-  }
-
-  let rightBtn = '';
-  if (showSearch) {
-    const isSearchView = state.currentView === 'search';
-    rightBtn = `<button class="header-btn ${isSearchView ? 'disabled' : ''}" id="header-search">${searchIcon()}</button>`;
-  }
-
-  header.innerHTML = `${leftBtn}<div class="header-title">${title}</div>${rightBtn}`;
-
-  setTimeout(() => {
-    const backBtn = document.getElementById('header-back');
-    if (backBtn) backBtn.addEventListener('click', goBack);
-    const searchBtn = document.getElementById('header-search');
-    if (searchBtn && state.currentView !== 'search') {
-      searchBtn.addEventListener('click', () => navigate('search'));
-    }
-  }, 0);
-
-  return header;
-}
-
-function createMiniPlayer() {
-  const mini = document.createElement('div');
-  mini.className = 'mini-player';
-  mini.innerHTML = `
-    <img class="mini-art" src="${state.currentTrack?.artwork || ''}" alt="">
-    <div class="mini-info">
-      <div class="mini-name">${truncate(state.currentTrack?.name || '', 18)}</div>
-    </div>
-    <div class="mini-indicator">${state.isPlaying ? 'PLAYING' : 'PAUSED'}</div>
-  `;
-  mini.addEventListener('click', () => navigate('nowplaying'));
-  return mini;
-}
-
-// ============ Navigation ============
-
-export function navigate(view) {
-  state.viewStack.push({ view: state.currentView, scrollIndex: state.scrollIndex });
-  state.currentView = view;
-  state.scrollIndex = 0;
-  render();
-}
-
-export function goBack() {
-  if (state.viewStack.length > 0) {
-    const prev = state.viewStack.pop();
-    state.currentView = prev.view;
-    state.scrollIndex = prev.scrollIndex || 0;
-  } else {
-    state.currentView = 'home';
-    state.scrollIndex = 0;
-  }
-  render();
-}
-
-async function openPlaylist(pl, idx) {
-  state.selectedPlaylist = pl;
-  state.playlistTracks = [];
-  navigate('playlist');
-  await fetchPlaylistTracks(pl.id);
-  if (state.currentView === 'playlist') render();
-}
-
-async function openPlaylistById(id, name, uri) {
-  state.selectedPlaylist = { id, name, uri };
-  state.playlistTracks = [];
-  navigate('playlist');
-  await fetchPlaylistTracks(id);
-  if (state.currentView === 'playlist') render();
-}
-
-async function openArtist(artistId) {
-  state.artistData = null;
-  navigate('artist');
-  await fetchArtist(artistId);
-  if (state.currentView === 'artist') render();
-}
-
-async function openAlbum(albumId) {
-  state.albumTracks = [];
-  state.selectedAlbum = null;
-  navigate('album');
-  await fetchAlbumTracks(albumId);
-  if (state.currentView === 'album') render();
-}
-
-// ============ List Scroll Management ============
-
-export function scrollFocusedIntoView() {
-  const container = document.getElementById('list-container');
-  if (!container) return;
-
-  const items = container.querySelectorAll('.cat-card, .content-card');
-  if (items.length === 0) return;
-
-  // Update focused classes
-  items.forEach((item, i) => {
-    item.classList.toggle('focused', i === state.scrollIndex);
-  });
-
-  const focusedItem = items[state.scrollIndex];
-  if (!focusedItem) return;
-
-  const cardHeight = focusedItem.offsetHeight || 44;
-  const containerHeight = container.clientHeight; // Accounts for player padding
-
-  // Sticky Middle Logic: Calculate exact scroll needed to center the focused card
-  const targetScroll = (state.scrollIndex * cardHeight) + (cardHeight / 2) - (containerHeight / 2);
-
-  container.scrollTo({
-    top: Math.max(0, targetScroll),
-    behavior: 'smooth'
-  });
-}
-
-export function getListLength() {
-  if (state.currentView === 'home') {
-    const filtered = state.homeFilter === 'all' ? state.homeSections : state.homeSections.filter(s => s.contentType === state.homeFilter);
-    return filtered.length;
-  }
-  if (state.currentView === 'section') {
-    if (!state.currentSection) return 0;
-    let items = state.currentSection.items;
-    if (state.currentSection.hasFilters && state.sectionFilter !== 'all') {
-      items = items.filter(item => item.filterType === state.sectionFilter);
-    }
-    return items.length;
-  }
-  if (state.currentView === 'playlist') return state.playlistTracks.length;
-  if (state.currentView === 'album') return state.albumTracks.length;
-  if (state.currentView === 'search') return state.searchResults.length;
-  if (state.currentView === 'discography') {
-    if (!state.artistData) return 0;
-    let count = 0;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') count += state.artistData.topTracks.length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') count += state.artistData.albums.length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') count += state.artistData.singles.length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') count += (state.artistData.appearsOn || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'related') count += state.artistData.related.length;
-    return count;
-  }
-  return 0;
-}
-
-// ============ Toast Messages ============
-
-export function showToast(msg, type = 'info') {
-  let el = document.querySelector('.toast');
-  if (el) el.remove();
-  el = document.createElement('div');
-  el.className = `toast toast-${type}`;
-  el.textContent = msg;
-  document.getElementById('app').appendChild(el);
-  setTimeout(() => { if (el.parentNode) el.remove(); }, type === 'error' ? 4000 : 2500);
-}
-
-// ============ Utility ============
-
-function truncate(str, max) {
-  if (!str) return '';
-  return str.length > max ? str.substring(0, max) + '…' : str;
-}
-
-function capitalize(str) {
-  if (!str) return '';
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-function formatFollowers(n) {
-  if (!n || n === 0) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'K';
-  return n.toString();
-}
-
-function formatTime(ms) {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
-}
-
-function updateProgressBar() {
-  const bar = document.querySelector('.progress-fill');
-  if (bar && state.durationMs > 0) {
-    bar.style.width = `${(state.progressMs / state.durationMs) * 100}%`;
-  }
-  const timeEl = document.querySelector('.track-time');
-  if (timeEl) {
-    timeEl.textContent = `${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}`;
-  }
-}
-
-// ============ Icons ============
-
-function spotifyLogo() {
-  return `<svg viewBox="0 0 168 168" fill="#1DB954"><path d="M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.7 3.2-7.1 1.7-19.5-11.9-44-14.6-72.9-8-2.8.6-5.6-1.1-6.2-3.9-.6-2.8 1.1-5.6 3.9-6.2 31.6-7.2 58.7-4.1 80.6 9.3 2.5 1.5 3.2 4.7 1.7 7.1zm10.3-22.8c-1.9 3.1-5.9 4-9 2.1-22.3-13.7-56.3-17.7-82.7-9.7-3.4 1-7.1-.9-8.1-4.3-1-3.4.9-7.1 4.3-8.1 30.1-9.1 67.5-4.7 93.1 11 3.1 1.9 4 5.9 2.4 9zm.9-23.8c-26.7-15.9-70.9-17.3-96.4-9.6-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.3-8.9 78-7.2 108.8 11.1 3.7 2.2 4.9 7 2.7 10.6-2.2 3.7-7 4.9-10.7 2.7z"/></svg>`;
-}
-
-function spotifyIcon() {
-  return `<svg viewBox="0 0 24 24" fill="#1DB954"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.5 17.3c-.2.3-.7.5-1 .2-2.8-1.7-6.3-2.1-10.4-1.1-.4.1-.8-.2-.9-.5-.1-.4.2-.8.5-.9 4.5-1 8.4-.6 11.5 1.3.4.2.5.6.3 1zm1.5-3.3c-.3.4-.8.5-1.3.3-3.2-2-8-2.5-11.8-1.4-.5.1-1-.1-1.2-.6-.1-.5.1-1 .6-1.2 4.3-1.3 9.7-.7 13.3 1.6.5.3.6.9.4 1.3zm.1-3.4c-3.8-2.3-10.1-2.5-13.8-1.4-.6.2-1.2-.2-1.3-.8-.2-.6.2-1.2.8-1.3 4.2-1.3 11.2-1 15.6 1.6.5.3.7 1 .4 1.6-.3.5-1 .7-1.7.3z"/></svg>`;
-}
-
-function playIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
-}
-
-function pauseIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
-}
-
-function prevIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>`;
-}
-
-function nextIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>`;
-}
-
-function searchIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>`;
-}
-
-function chevronLeft() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>`;
-}
-
-function chevronDown() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`;
-}
-
-function chevronRight() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor" class="chevron-right"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
-}
-
-function followIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>`;
-}
-
-function noteIcon() {
-  return `<svg viewBox="0 0 24 24" fill="#535353"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`;
-}
-
-function swipeRightIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M4 12h12l-4-4 1.4-1.4L19.8 12l-6.4 6.4L12 17l4-4H4z"/></svg>`;
-}
-
-function swipeLeftIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M20 12H8l4 4-1.4 1.4L4.2 12l6.4-6.4L12 7l-4 4h12z"/></svg>`;
-}
-
-function scrollIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2l-4 4h3v4h2V6h3L12 2zm0 20l4-4h-3v-4h-2v4H8l4 4z"/></svg>`;
-}
-
-function tapIcon() {
-  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2a4 4 0 00-4 4c0 1.1.45 2.1 1.17 2.83L12 6l2.83 2.83A4 4 0 0012 2zm-1 10v9l-3-1.5v-2L11 16v-4h2v4l3 1.5v2L13 21v-9h-2z"/></svg>`;
-}
-</file>
-
 <file path=".nts/public/icon.svg">
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 26 26">
   <defs>
@@ -3238,6 +1522,202 @@ dist
 </svg>
 </file>
 
+<file path="apps/src/auth.js">
+// Spotify R1 Player - Authentication
+import { CONFIG, state } from './state.js';
+
+// ============ Storage (R1 creationStorage or localStorage) ============
+
+export async function saveToken(token, expiry, refresh) {
+  const data = JSON.stringify({ token, expiry, refresh });
+  if (window.creationStorage) {
+    try { await window.creationStorage.plain.setItem('spotify_auth', btoa(data)); } catch (e) {}
+  } else {
+    localStorage.setItem('spotify_auth', data);
+  }
+}
+
+export async function loadToken() {
+  let raw;
+  if (window.creationStorage) {
+    try {
+      const stored = await window.creationStorage.plain.getItem('spotify_auth');
+      if (stored) raw = atob(stored);
+    } catch (e) {}
+  } else {
+    raw = localStorage.getItem('spotify_auth');
+  }
+  if (raw) {
+    try {
+      const { token, expiry, refresh } = JSON.parse(raw);
+      return { token, expiry, refresh };
+    } catch (e) {}
+  }
+  return null;
+}
+
+export async function clearToken() {
+  if (window.creationStorage) {
+    try { await window.creationStorage.plain.removeItem('spotify_auth'); } catch (e) {}
+  } else {
+    localStorage.removeItem('spotify_auth');
+  }
+}
+
+export async function saveVolume(vol) {
+  if (window.creationStorage) {
+    try { await window.creationStorage.plain.setItem('spotify_vol', btoa(JSON.stringify(vol))); } catch (e) {}
+  } else {
+    localStorage.setItem('spotify_vol', JSON.stringify(vol));
+  }
+}
+
+export async function loadVolume() {
+  if (window.creationStorage) {
+    try {
+      const s = await window.creationStorage.plain.getItem('spotify_vol');
+      if (s) return JSON.parse(atob(s));
+    } catch (e) {}
+  } else {
+    const s = localStorage.getItem('spotify_vol');
+    if (s) return JSON.parse(s);
+  }
+  return 0.7;
+}
+
+// ============ OAuth 2.0 PKCE ============
+
+function generateRandomString(length) {
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], '');
+}
+
+async function sha256(plain) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plain);
+  return window.crypto.subtle.digest('SHA-256', data);
+}
+
+function base64encode(input) {
+  return btoa(String.fromCharCode(...new Uint8Array(input)))
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+export async function startAuth() {
+  if (!CONFIG.clientId) {
+    showToast('Set Client ID in config', 'error');
+    return;
+  }
+
+  const codeVerifier = generateRandomString(64);
+  sessionStorage.setItem('code_verifier', codeVerifier);
+
+  const hashed = await sha256(codeVerifier);
+  const codeChallenge = base64encode(hashed);
+
+  const oauthState = generateRandomString(16);
+  sessionStorage.setItem('auth_state', oauthState);
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: CONFIG.clientId,
+    scope: CONFIG.scopes,
+    code_challenge_method: 'S256',
+    code_challenge: codeChallenge,
+    redirect_uri: CONFIG.redirectUri,
+    state: oauthState
+  });
+
+  window.location.href = `https://accounts.spotify.com/authorize?${params.toString()}`;
+}
+
+export async function handleCallback() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const oauthState = params.get('state');
+
+  if (!code) return false;
+
+  const storedState = sessionStorage.getItem('auth_state');
+  if (oauthState !== storedState) {
+    showToast('Auth state mismatch', 'error');
+    return false;
+  }
+
+  const codeVerifier = sessionStorage.getItem('code_verifier');
+
+  const body = new URLSearchParams({
+    client_id: CONFIG.clientId,
+    grant_type: 'authorization_code',
+    code: code,
+    redirect_uri: CONFIG.redirectUri,
+    code_verifier: codeVerifier
+  });
+
+  try {
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+
+    if (!res.ok) throw new Error('Token exchange failed');
+    const data = await res.json();
+
+    state.accessToken = data.access_token;
+    state.tokenExpiry = Date.now() + data.expires_in * 1000;
+    await saveToken(state.accessToken, state.tokenExpiry, data.refresh_token || '');
+
+    window.history.replaceState({}, document.title, window.location.pathname);
+    sessionStorage.removeItem('code_verifier');
+    sessionStorage.removeItem('auth_state');
+    return true;
+  } catch (e) {
+    showToast('Login failed', 'error');
+    return false;
+  }
+}
+
+export async function refreshToken() {
+  const stored = await loadToken();
+  if (!stored || !stored.refresh) return false;
+
+  const body = new URLSearchParams({
+    client_id: CONFIG.clientId,
+    grant_type: 'refresh_token',
+    refresh_token: stored.refresh
+  });
+
+  try {
+    const res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    state.accessToken = data.access_token;
+    state.tokenExpiry = Date.now() + data.expires_in * 1000;
+    await saveToken(state.accessToken, state.tokenExpiry, data.refresh_token || stored.refresh);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Temporary showToast for auth module - will be moved to ui.js
+function showToast(msg, type = 'info') {
+  let el = document.querySelector('.toast');
+  if (el) el.remove();
+  el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('app').appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, type === 'error' ? 4000 : 2500);
+}
+</file>
+
 <file path="apps/.gitignore">
 node_modules
 dist
@@ -3286,6 +1766,78 @@ dist
 }
 </file>
 
+<file path="apps/src/state.js">
+// Spotify R1 Player - State Management
+// ============ Configuration ============
+
+export const CONFIG = {
+  clientId: '8ef09899795a4fdab465bfa82c97c534',
+  redirectUri: `${window.location.origin}/callback.html`,
+  scopes: [
+    'streaming',
+    'user-read-email',
+    'user-read-private',
+    'user-read-playback-state',
+    'user-modify-playback-state',
+    'user-read-currently-playing',
+    'user-read-recently-played',
+    'user-library-read',
+    'user-follow-read',
+    'user-follow-modify',
+    'user-top-read',
+    'playlist-read-private',
+    'playlist-read-collaborative'
+  ].join(' ')
+};
+
+// ============ State ============
+
+export const state = {
+  accessToken: null,
+  tokenExpiry: 0,
+  player: null,
+  deviceId: null,
+  currentView: 'login',
+  isPlaying: false,
+  currentTrack: null,
+  progressMs: 0,
+  durationMs: 0,
+  volume: 0.7,
+  playlists: [],
+  playlistTracks: [],
+  searchResults: [],
+  scrollIndex: 0,
+  selectedPlaylist: null,
+  progressInterval: null,
+  viewStack: [],
+  homeSections: [],
+  homeFilter: 'all',
+  sectionFilter: 'all',
+  discographyFilter: 'all',
+  artistData: null,
+  artistDiscography: null,
+  artistIsFollowed: false,
+  albumTracks: [],
+  selectedAlbum: null,
+  onboardingShown: false,
+  currentSection: null
+};
+</file>
+
+<file path="index.html">
+<!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>Spotify R1</title>
+    <meta http-equiv="refresh" content="0; url=apps/dist/index.html">
+  </head>
+  <body>
+    <p>If you are not redirected automatically, follow this <a href="apps/dist/index.html">apps/dist/index.html</a>.</p>
+  </body>
+  </html>
+</file>
+
 <file path="apps/public/qr.html">
 <!DOCTYPE html>
 <html lang="en">
@@ -3317,8 +1869,8 @@ dist
       title: "Spotify",
       url: "https://r1-spotify.vercel.app",
       description: "Spotify player for Rabbit R1",
-      iconUrl: "https://r1-spotify.vercel.app/icon.svg",
-      themeColor: "#121212"
+      iconUrl: "https://r1-spotify.vercel.app/icon.png",
+      themeColor: "#1DB954"
     };
 
     const qrData = JSON.stringify(creationData);
@@ -3343,18 +1895,935 @@ dist
 </html>
 </file>
 
-<file path="index.html">
-<!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>Spotify R1</title>
-    <meta http-equiv="refresh" content="0; url=apps/dist/index.html">
-  </head>
-  <body>
-    <p>If you are not redirected automatically, follow this <a href="apps/dist/index.html">apps/dist/index.html</a>.</p>
-  </body>
-  </html>
+<file path="apps/src/ui.js">
+// Spotify R1 Player - UI Rendering
+import { state } from './state.js';
+import { startAuth } from './auth.js';
+import { playContext, playTrackInContext, api, fetchSectionItems, fetchPlaylistTracks, fetchArtist, fetchAlbumTracks, startProgressTimer, togglePlayback, prevTrack, nextTrack, searchSpotify } from './api.js';
+
+// ============ Main Render ============
+
+export function render() {
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+
+  switch (state.currentView) {
+    case 'login': renderLogin(app); break;
+    case 'home': renderHome(app); break;
+    case 'section': renderSection(app); break;
+    case 'playlist': renderPlaylist(app); break;
+    case 'album': renderAlbum(app); break;
+    case 'nowplaying': renderNowPlaying(app); break;
+    case 'search': renderSearch(app); break;
+    case 'artist': renderArtist(app); break;
+    case 'discography': renderDiscography(app); break;
+  }
+}
+
+// ============ Login View ============
+
+function renderLogin(app) {
+  app.innerHTML = `
+    <div class="view-login">
+      <div class="login-logo">${spotifyLogo()}</div>
+      <div class="login-title">Spotify</div>
+      <div class="login-subtitle">Connect your account to play music on your R1</div>
+      <button class="login-btn" id="login-btn">Log in with Spotify</button>
+      <div class="login-hint">Requires Spotify Premium</div>
+    </div>
+  `;
+  document.getElementById('login-btn').addEventListener('click', startAuth);
+}
+
+// ============ Onboarding Overlay ============
+
+export function showOnboarding() {
+  if (state.onboardingShown) return;
+  state.onboardingShown = true;
+  try { localStorage.setItem('spotify_onboarded', '1'); } catch (e) {}
+
+  const overlay = document.createElement('div');
+  overlay.className = 'onboarding-overlay';
+  overlay.innerHTML = `
+    <div class="onboard-content">
+      <div class="onboard-title">Controls</div>
+      <div class="onboard-row"><span class="onboard-icon">${swipeRightIcon()}</span><span>Swipe right — go back</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${swipeLeftIcon()}</span><span>Swipe left — search</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${scrollIcon()}</span><span>Scroll — browse / volume</span></div>
+      <div class="onboard-row"><span class="onboard-icon">${tapIcon()}</span><span>Tap — select</span></div>
+      <div class="onboard-dismiss">Tap anywhere to start</div>
+    </div>
+  `;
+  overlay.addEventListener('click', () => overlay.remove());
+  document.getElementById('app').appendChild(overlay);
+  setTimeout(() => overlay.remove(), 6000);
+}
+
+// ============ Home View (Category Cards - full width stacked) ============
+
+function renderHome(app) {
+  const header = createHeader('Home', true);
+  app.appendChild(header);
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  filterBar.innerHTML = `
+    <button class="filter-btn ${state.homeFilter === 'all' ? 'active' : ''}" data-filter="all">All</button>
+    <button class="filter-btn ${state.homeFilter === 'music' ? 'active' : ''}" data-filter="music">Music</button>
+    <button class="filter-btn ${state.homeFilter === 'podcasts' ? 'active' : ''}" data-filter="podcasts">Podcasts</button>
+    <button class="filter-btn ${state.homeFilter === 'audiobooks' ? 'active' : ''}" data-filter="audiobooks">Audiobooks</button>
+  `;
+  filterBar.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.homeFilter = btn.dataset.filter;
+      render();
+    });
+  });
+  app.appendChild(filterBar);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  const filteredSections = state.homeFilter === 'all' 
+    ? state.homeSections 
+    : state.homeSections.filter(s => s.contentType === state.homeFilter);
+
+  if (filteredSections.length === 0) {
+    container.innerHTML = `<div class="empty-state">No content</div>`;
+  } else {
+    filteredSections.forEach((section, i) => {
+      const card = document.createElement('div');
+      card.className = `cat-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${section.image}')`;
+      card.innerHTML = `
+        <div class="cat-card-overlay"></div>
+        <div class="cat-card-content">
+          <span class="cat-card-title">${section.title}</span>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => openSection(section));
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Section View (Content Cards - items within a category) ============
+
+function renderSection(app) {
+  if (!state.currentSection) { goBack(); return; }
+
+  const header = createHeader(state.currentSection.title, true);
+  app.appendChild(header);
+
+  if (state.currentSection.hasFilters && state.currentSection.filterOptions) {
+    const filterBar = document.createElement('div');
+    filterBar.className = 'filter-bar';
+    state.currentSection.filterOptions.forEach(f => {
+      const btn = document.createElement('button');
+      btn.className = `filter-btn ${state.sectionFilter === f ? 'active' : ''}`;
+      btn.textContent = capitalize(f);
+      btn.addEventListener('click', () => {
+        state.sectionFilter = f;
+        state.scrollIndex = 0;
+        render();
+      });
+      filterBar.appendChild(btn);
+    });
+    app.appendChild(filterBar);
+  }
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  let items = state.currentSection.items;
+  if (state.currentSection.hasFilters && state.sectionFilter !== 'all') {
+    items = items.filter(item => item.filterType === state.sectionFilter);
+  }
+
+  if (items.length === 0) {
+    container.innerHTML = `<div class="empty-state">Loading…</div>`;
+  } else {
+    items.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${item.image}')`;
+      
+      let typeLabel = capitalize(item.type);
+      let sublabel = '';
+      if (item.type === 'artist') {
+        sublabel = '';
+      } else if (item.artist) {
+        sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 20)}</span>`;
+      } else {
+        sublabel = `<span>${typeLabel}</span>`;
+      }
+      
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(item.name, 26)}</div>
+            ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => handleContentCardClick(item));
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+function handleContentCardClick(item) {
+  if (item.type === 'playlist') {
+    openPlaylistById(item.id, item.name, item.uri);
+  } else if (item.type === 'artist') {
+    openArtist(item.id);
+  } else if (item.type === 'album') {
+    openAlbum(item.id);
+  } else if (item.type === 'track') {
+    playTrackInContext(item.contextUri || item.uri, item.uri);
+    navigate('nowplaying');
+  }
+}
+
+async function openSection(section) {
+  state.currentSection = { 
+    title: section.title, 
+    items: [], 
+    categoryType: section.categoryType,
+    categoryId: section.categoryId
+  };
+  navigate('section');
+  await fetchSectionItems(section.categoryType);
+  if (state.currentView === 'section') render();
+}
+
+// ============ Playlist View (Content Cards) ============
+
+function renderPlaylist(app) {
+  const header = createHeader(truncate(state.selectedPlaylist?.name || 'Playlist', 18), false);
+  app.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  if (state.playlistTracks.length === 0) {
+    container.innerHTML = `<div class="empty-state">Loading tracks…</div>`;
+  } else {
+    state.playlistTracks.forEach((track, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${track.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(track.name, 26)}</div>
+            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => {
+        playTrackInContext(state.selectedPlaylist.uri, track.uri);
+        navigate('nowplaying');
+      });
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Album View (Content Cards) ============
+
+function renderAlbum(app) {
+  const header = createHeader(truncate(state.selectedAlbum?.name || 'Album', 18), false);
+  app.appendChild(header);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  if (state.albumTracks.length === 0) {
+    container.innerHTML = `<div class="empty-state">Loading…</div>`;
+  } else {
+    state.albumTracks.forEach((track, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${track.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(track.name, 26)}</div>
+            <div class="content-card-sub"><span>Song</span><span class="dot">·</span><span>${truncate(track.artist, 20)}</span></div>
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => {
+        playContext(state.selectedAlbum.uri, i);
+        navigate('nowplaying');
+      });
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Artist View ============
+
+function renderArtist(app) {
+  if (!state.artistData) { app.innerHTML = `<div class="empty-state">Loading…</div>`; return; }
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  // Card 0: Full Screen Hero
+  const heroCard = document.createElement('div');
+  heroCard.className = `artist-hero-card ${state.scrollIndex === 0 ? 'focused' : ''}`;
+  heroCard.dataset.idx = 0;
+  heroCard.style.backgroundImage = `linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, #121212 100%), url('${state.artistData.image}')`;
+  
+  heroCard.innerHTML = `
+    <button class="artist-back" id="artist-back">${chevronLeft()}</button>
+    <div class="artist-hero-content">
+      <div class="artist-name">${truncate(state.artistData.name, 22)}</div>
+      <div class="artist-stats">${formatFollowers(state.artistData.followers)} followers</div>
+      <div class="artist-actions">
+        <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
+      </div>
+    </div>
+    <div class="scroll-down-indicator">${chevronDown()}</div>
+  `;
+  container.appendChild(heroCard);
+
+  // Subsequent Cards for Discography
+  let idx = 1;
+  const sections = [
+    { title: 'Top Tracks', filter: 'popular', count: state.artistData.topTracks.length },
+    { title: 'Albums', filter: 'albums', count: state.artistData.albums.length },
+    { title: 'Singles', filter: 'singles', count: state.artistData.singles.length }
+  ].filter(s => s.count > 0);
+
+  sections.forEach((sec) => {
+    const card = document.createElement('div');
+    card.className = `cat-card ${idx === state.scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = idx;
+    card.style.background = '#282828';
+    card.innerHTML = `<div class="cat-card-content"><span class="cat-card-title">${sec.title}</span>${chevronRight()}</div>`;
+    card.addEventListener('click', () => { state.discographyFilter = sec.filter; navigate('discography'); });
+    container.appendChild(card);
+    idx++;
+  });
+
+  app.appendChild(container);
+
+  setTimeout(() => {
+    document.getElementById('artist-back')?.addEventListener('click', goBack);
+    document.getElementById('artist-play')?.addEventListener('click', () => {
+      if (state.artistData.topTracks.length) {
+        api('/me/player/play', { method: 'PUT', body: JSON.stringify({ uris: state.artistData.topTracks.map(t => t.uri) }) });
+        navigate('nowplaying');
+      } else { showToast('No tracks found', 'warning'); }
+    });
+  }, 0);
+
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Discography View (Content Cards) ============
+
+function renderDiscography(app) {
+  if (!state.artistData) { goBack(); return; }
+
+  const header = createHeader(truncate(state.artistData.name, 16), true);
+  app.appendChild(header);
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
+  filters.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
+    btn.textContent = capitalize(f);
+    btn.addEventListener('click', () => {
+      state.discographyFilter = f;
+      state.scrollIndex = 0;
+      render();
+    });
+    filterBar.appendChild(btn);
+  });
+  app.appendChild(filterBar);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  let allItems = [];
+
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') {
+    state.artistData.topTracks.forEach(t => {
+      allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
+    state.artistData.albums.forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
+    state.artistData.singles.forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') {
+    (state.artistData.appearsOn || []).forEach(a => {
+      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'related') {
+    state.artistData.related.forEach(a => {
+      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
+    });
+  }
+
+  allItems.forEach((item, i) => {
+    const card = document.createElement('div');
+    card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = i;
+    card.style.backgroundImage = `url('${item.image}')`;
+
+    let typeLabel = capitalize(item.type);
+    let sublabel = '';
+    if (item.type === 'artist') {
+      sublabel = '';
+    } else if (item.artist) {
+      sublabel = `<span>${typeLabel}</span><span class="dot">·</span><span>${truncate(item.artist, 18)}</span>`;
+    } else {
+      sublabel = `<span>${typeLabel}</span>`;
+    }
+
+    card.innerHTML = `
+      <div class="content-card-overlay"></div>
+      <div class="content-card-content">
+        <div class="content-card-labels">
+          <div class="content-card-name">${truncate(item.name, 26)}</div>
+          ${sublabel ? `<div class="content-card-sub">${sublabel}</div>` : ''}
+        </div>
+        ${chevronRight()}
+      </div>
+    `;
+    card.addEventListener('click', () => handleContentCardClick(item));
+    container.appendChild(card);
+  });
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Now Playing View ============
+
+function renderNowPlaying(app) {
+  const track = state.currentTrack || { name: 'Not playing', artist: '', album: '', artwork: '' };
+
+  app.innerHTML = `
+    <div class="view-nowplaying">
+      <div class="np-header">
+        <button class="np-back" id="np-back">${chevronDown()}</button>
+        <div class="np-context">Now Playing</div>
+      </div>
+      <div class="np-artwork">
+        ${track.artwork ? `<img src="${track.artwork}" alt="">` : `<div class="np-artwork-placeholder">${noteIcon()}</div>`}
+      </div>
+      <div class="np-track-info">
+        <div class="np-track-name">${truncate(track.name, 26)}</div>
+        <div class="np-track-artist">${truncate(track.artist, 30)}</div>
+      </div>
+      <div class="np-progress">
+        <div class="progress-track"><div class="progress-fill" style="width:${state.durationMs ? (state.progressMs / state.durationMs * 100) : 0}%"></div></div>
+        <div class="track-time">${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}</div>
+      </div>
+      <div class="np-controls">
+        <button class="ctrl-btn" id="ctrl-prev">${prevIcon()}</button>
+        <button class="ctrl-btn ctrl-play" id="ctrl-play">${state.isPlaying ? pauseIcon() : playIcon()}</button>
+        <button class="ctrl-btn" id="ctrl-next">${nextIcon()}</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('np-back').addEventListener('click', goBack);
+  document.getElementById('ctrl-prev').addEventListener('click', prevTrack);
+  document.getElementById('ctrl-play').addEventListener('click', togglePlayback);
+  document.getElementById('ctrl-next').addEventListener('click', nextTrack);
+}
+
+export function updateNowPlaying() {
+  if (state.currentView === 'nowplaying') {
+    const nameEl = document.querySelector('.np-track-name');
+    const artistEl = document.querySelector('.np-track-artist');
+    const artEl = document.querySelector('.np-artwork img');
+    const playBtn = document.getElementById('ctrl-play');
+
+    if (nameEl && state.currentTrack) nameEl.textContent = truncate(state.currentTrack.name, 26);
+    if (artistEl && state.currentTrack) artistEl.textContent = truncate(state.currentTrack.artist, 30);
+    if (artEl && state.currentTrack?.artwork) artEl.src = state.currentTrack.artwork;
+    if (playBtn) playBtn.innerHTML = state.isPlaying ? pauseIcon() : playIcon();
+    updateProgressBar();
+  } else {
+    const mini = document.querySelector('.mini-player');
+    if (mini && state.currentTrack) {
+      mini.querySelector('.mini-name').textContent = truncate(state.currentTrack.name, 18);
+      const indicator = mini.querySelector('.mini-indicator');
+      if (indicator) indicator.textContent = state.isPlaying ? 'PLAYING' : 'PAUSED';
+    }
+  }
+}
+
+// ============ Search View (Content Cards) ============
+
+function renderSearch(app) {
+  const header = createHeader('Search', false);
+  app.appendChild(header);
+
+  const searchBox = document.createElement('div');
+  searchBox.className = 'search-box';
+  searchBox.innerHTML = `<input type="text" class="search-input" id="search-input" placeholder="What do you want to play?" autocomplete="off">`;
+  app.appendChild(searchBox);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  if (state.searchResults.length === 0) {
+    container.innerHTML = `<div class="empty-state">Type to search</div>`;
+  } else {
+    updateSearchCards(container);
+  }
+
+  app.appendChild(container);
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+
+  const input = document.getElementById('search-input');
+  input.focus();
+  let searchTimeout;
+  input.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(async () => {
+      state.scrollIndex = 0;
+      await searchSpotify(input.value);
+      const listEl = document.getElementById('list-container');
+      if (listEl) {
+        if (state.searchResults.length) {
+          updateSearchCards(listEl);
+        } else if (input.value) {
+          listEl.innerHTML = `<div class="empty-state">No results</div>`;
+        } else {
+          listEl.innerHTML = `<div class="empty-state">Type to search</div>`;
+        }
+      }
+    }, 350);
+  });
+
+  scrollFocusedIntoView();
+}
+
+export function updateSearchCards(container) {
+  const existingCards = container.querySelectorAll('.content-card');
+  
+  // If the count doesn't match, fallback to standard render (innerHTML rebuild)
+  if (existingCards.length !== state.searchResults.length) {
+    container.innerHTML = '';
+    if (state.searchResults.length === 0) {
+       container.innerHTML = `<div class="empty-state">No results</div>`;
+       return;
+    }
+    state.searchResults.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${item.artwork}')`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${item.name}</div>
+            <div class="content-card-sub">
+              ${item.subtitle ? `<span>${item.type}</span><span class="dot">·</span><span>${item.subtitle}</span>` : `<span>${item.type}</span>`}
+            </div>
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => handleSearchItemClick(item));
+      container.appendChild(card);
+    });
+    return;
+  }
+
+  // High performance path: Recycle existing DOM nodes
+  state.searchResults.forEach((item, i) => {
+    const card = existingCards[i];
+    card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+    card.dataset.idx = i;
+    card.style.backgroundImage = `url('${item.artwork}')`;
+    card.querySelector('.content-card-name').textContent = item.name;
+    
+    const subEl = card.querySelector('.content-card-sub');
+    subEl.innerHTML = item.subtitle 
+      ? `<span>${item.type}</span><span class="dot">·</span><span>${item.subtitle}</span>` 
+      : `<span>${item.type}</span>`;
+      
+    card.onclick = () => handleSearchItemClick(state.searchResults[i]);
+  });
+}
+
+function handleSearchItemClick(item) {
+  if (item.type === 'Artist') {
+    openArtist(item.id);
+  } else if (item.type === 'Album') {
+    openAlbum(item.id);
+  } else if (item.type === 'Playlist') {
+    openPlaylistById(item.id, item.name, item.uri);
+  } else if (item.type === 'Song') {
+    playTrackInContext(item.contextUri || item.uri, item.uri);
+    navigate('nowplaying');
+  }
+}
+
+// ============ Shared Components ============
+
+function createHeader(title, showSearch) {
+  const header = document.createElement('div');
+  header.className = 'header';
+
+  let leftBtn = '';
+  if (state.viewStack.length > 0) {
+    leftBtn = `<button class="header-btn back-btn" id="header-back">${chevronLeft()}</button>`;
+  } else {
+    leftBtn = `<div class="header-logo">${spotifyIcon()}</div>`;
+  }
+
+  let rightBtn = '';
+  if (showSearch) {
+    const isSearchView = state.currentView === 'search';
+    rightBtn = `<button class="header-btn ${isSearchView ? 'disabled' : ''}" id="header-search">${searchIcon()}</button>`;
+  }
+
+  header.innerHTML = `${leftBtn}<div class="header-title">${title}</div>${rightBtn}`;
+
+  setTimeout(() => {
+    const backBtn = document.getElementById('header-back');
+    if (backBtn) backBtn.addEventListener('click', goBack);
+    const searchBtn = document.getElementById('header-search');
+    if (searchBtn && state.currentView !== 'search') {
+      searchBtn.addEventListener('click', () => navigate('search'));
+    }
+  }, 0);
+
+  return header;
+}
+
+function createMiniPlayer() {
+  const mini = document.createElement('div');
+  mini.className = 'mini-player';
+  mini.innerHTML = `
+    <img class="mini-art" src="${state.currentTrack?.artwork || ''}" alt="">
+    <div class="mini-info">
+      <div class="mini-name">${truncate(state.currentTrack?.name || '', 18)}</div>
+    </div>
+    <div class="mini-indicator">${state.isPlaying ? 'PLAYING' : 'PAUSED'}</div>
+  `;
+  mini.addEventListener('click', () => navigate('nowplaying'));
+  return mini;
+}
+
+// ============ Navigation ============
+
+export function navigate(view) {
+  state.viewStack.push({ view: state.currentView, scrollIndex: state.scrollIndex });
+  state.currentView = view;
+  state.scrollIndex = 0;
+  render();
+}
+
+export function goBack() {
+  if (state.viewStack.length > 0) {
+    const prev = state.viewStack.pop();
+    state.currentView = prev.view;
+    state.scrollIndex = prev.scrollIndex || 0;
+  } else {
+    state.currentView = 'home';
+    state.scrollIndex = 0;
+  }
+  render();
+}
+
+async function openPlaylist(pl, idx) {
+  state.selectedPlaylist = pl;
+  state.playlistTracks = [];
+  navigate('playlist');
+  await fetchPlaylistTracks(pl.id);
+  if (state.currentView === 'playlist') render();
+}
+
+async function openPlaylistById(id, name, uri) {
+  state.selectedPlaylist = { id, name, uri };
+  state.playlistTracks = [];
+  navigate('playlist');
+  await fetchPlaylistTracks(id);
+  if (state.currentView === 'playlist') render();
+}
+
+async function openArtist(artistId) {
+  state.artistData = null;
+  navigate('artist');
+  await fetchArtist(artistId);
+  if (state.currentView === 'artist') render();
+}
+
+async function openAlbum(albumId) {
+  state.albumTracks = [];
+  state.selectedAlbum = null;
+  navigate('album');
+  await fetchAlbumTracks(albumId);
+  if (state.currentView === 'album') render();
+}
+
+// ============ List Scroll Management ============
+
+export function scrollFocusedIntoView() {
+  const container = document.getElementById('list-container');
+  if (!container) return;
+
+  const items = container.querySelectorAll('.cat-card, .content-card, .artist-hero-card');
+  if (items.length === 0) return;
+
+  items.forEach((item, i) => item.classList.toggle('focused', i === state.scrollIndex));
+
+  const focusedItem = items[state.scrollIndex];
+  if (!focusedItem) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const itemRect = focusedItem.getBoundingClientRect();
+  
+  // Bulletproof calculation for mixed-height cards
+  const itemTop = (itemRect.top - containerRect.top) + container.scrollTop;
+  const targetScroll = itemTop + (itemRect.height / 2) - (containerRect.height / 2);
+
+  container.scrollTo({ top: Math.max(0, targetScroll), behavior: 'smooth' });
+}
+
+export function getListLength() {
+  if (state.currentView === 'home') {
+    const filtered = state.homeFilter === 'all' ? state.homeSections : state.homeSections.filter(s => s.contentType === state.homeFilter);
+    return filtered.length;
+  }
+  if (state.currentView === 'section') {
+    if (!state.currentSection) return 0;
+    let items = state.currentSection.items;
+    if (state.currentSection.hasFilters && state.sectionFilter !== 'all') {
+      items = items.filter(item => item.filterType === state.sectionFilter);
+    }
+    return items.length;
+  }
+  if (state.currentView === 'playlist') return state.playlistTracks.length;
+  if (state.currentView === 'album') return state.albumTracks.length;
+  if (state.currentView === 'search') return state.searchResults.length;
+  if (state.currentView === 'artist') {
+    let count = 1; // Hero card
+    if (state.artistData?.topTracks.length) count++;
+    if (state.artistData?.albums.length) count++;
+    if (state.artistData?.singles.length) count++;
+    return count;
+  }
+  if (state.currentView === 'discography') {
+    if (!state.artistData) return 0;
+    let count = 0;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') count += state.artistData.topTracks.length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') count += state.artistData.albums.length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') count += state.artistData.singles.length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') count += (state.artistData.appearsOn || []).length;
+    if (state.discographyFilter === 'all' || state.discographyFilter === 'related') count += state.artistData.related.length;
+    return count;
+  }
+  return 0;
+}
+
+// ============ Toast Messages ============
+
+export function showToast(msg, type = 'info') {
+  let el = document.querySelector('.toast');
+  if (el) el.remove();
+  el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('app').appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, type === 'error' ? 4000 : 2500);
+}
+
+// ============ Utility ============
+
+function truncate(str, max) {
+  if (!str) return '';
+  return str.length > max ? str.substring(0, max) + '…' : str;
+}
+
+function capitalize(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+export function triggerHaptic() {
+  // Try to trigger a crisp 10ms vibration. Fails silently if unsupported or disabled.
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    try {
+      navigator.vibrate(10);
+    } catch (e) {}
+  }
+}
+
+export function updateProgressBar() {
+  const bar = document.querySelector('.progress-fill');
+  if (bar && state.durationMs > 0) {
+    bar.style.width = `${(state.progressMs / state.durationMs) * 100}%`;
+  }
+  const timeEl = document.querySelector('.track-time');
+  if (timeEl) {
+    timeEl.textContent = `${formatTime(state.progressMs)} / ${formatTime(state.durationMs)}`;
+  }
+}
+
+function formatTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+let volumeToastTimeout = null;
+export function showVolumeToast() {
+  let toast = document.querySelector('.volume-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.className = 'volume-toast';
+    document.getElementById('app').appendChild(toast);
+  }
+  toast.innerHTML = `
+    <div class="vol-track-sm"><div class="vol-fill-sm" style="width:${state.volume * 100}%"></div></div>
+    <span class="vol-pct-sm">${Math.round(state.volume * 100)}%</span>
+  `;
+  toast.classList.add('visible');
+
+  if (volumeToastTimeout) clearTimeout(volumeToastTimeout);
+  volumeToastTimeout = setTimeout(() => toast.classList.remove('visible'), 1200);
+}
+
+function formatFollowers(n) {
+  if (!n || n === 0) return '';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'K';
+  return n.toString();
+}
+
+
+// ============ Icons ============
+
+function spotifyLogo() {
+  return `<svg viewBox="0 0 168 168" fill="#1DB954"><path d="M84 0C37.6 0 0 37.6 0 84s37.6 84 84 84 84-37.6 84-84S130.4 0 84 0zm38.5 121.2c-1.5 2.5-4.7 3.2-7.1 1.7-19.5-11.9-44-14.6-72.9-8-2.8.6-5.6-1.1-6.2-3.9-.6-2.8 1.1-5.6 3.9-6.2 31.6-7.2 58.7-4.1 80.6 9.3 2.5 1.5 3.2 4.7 1.7 7.1zm10.3-22.8c-1.9 3.1-5.9 4-9 2.1-22.3-13.7-56.3-17.7-82.7-9.7-3.4 1-7.1-.9-8.1-4.3-1-3.4.9-7.1 4.3-8.1 30.1-9.1 67.5-4.7 93.1 11 3.1 1.9 4 5.9 2.4 9zm.9-23.8c-26.7-15.9-70.9-17.3-96.4-9.6-4.1 1.2-8.4-1.1-9.6-5.2-1.2-4.1 1.1-8.4 5.2-9.6 29.3-8.9 78-7.2 108.8 11.1 3.7 2.2 4.9 7 2.7 10.6-2.2 3.7-7 4.9-10.7 2.7z"/></svg>`;
+}
+
+function spotifyIcon() {
+  return `<svg viewBox="0 0 24 24" fill="#1DB954"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.6 0 12 0zm5.5 17.3c-.2.3-.7.5-1 .2-2.8-1.7-6.3-2.1-10.4-1.1-.4.1-.8-.2-.9-.5-.1-.4.2-.8.5-.9 4.5-1 8.4-.6 11.5 1.3.4.2.5.6.3 1zm1.5-3.3c-.3.4-.8.5-1.3.3-3.2-2-8-2.5-11.8-1.4-.5.1-1-.1-1.2-.6-.1-.5.1-1 .6-1.2 4.3-1.3 9.7-.7 13.3 1.6.5.3.6.9.4 1.3zm.1-3.4c-3.8-2.3-10.1-2.5-13.8-1.4-.6.2-1.2-.2-1.3-.8-.2-.6.2-1.2.8-1.3 4.2-1.3 11.2-1 15.6 1.6.5.3.7 1 .4 1.6-.3.5-1 .7-1.7.3z"/></svg>`;
+}
+
+function playIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+}
+
+function pauseIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+}
+
+function prevIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>`;
+}
+
+function nextIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>`;
+}
+
+function searchIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>`;
+}
+
+function chevronLeft() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>`;
+}
+
+function chevronDown() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>`;
+}
+
+function chevronRight() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" class="chevron-right"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
+}
+
+function followIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>`;
+}
+
+function noteIcon() {
+  return `<svg viewBox="0 0 24 24" fill="#535353"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>`;
+}
+
+function swipeRightIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M4 12h12l-4-4 1.4-1.4L19.8 12l-6.4 6.4L12 17l4-4H4z"/></svg>`;
+}
+
+function swipeLeftIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M20 12H8l4 4-1.4 1.4L4.2 12l6.4-6.4L12 7l-4 4h12z"/></svg>`;
+}
+
+function scrollIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2l-4 4h3v4h2V6h3L12 2zm0 20l4-4h-3v-4h-2v4H8l4 4z"/></svg>`;
+}
+
+function tapIcon() {
+  return `<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><path d="M12 2a4 4 0 00-4 4c0 1.1.45 2.1 1.17 2.83L12 6l2.83 2.83A4 4 0 0012 2zm-1 10v9l-3-1.5v-2L11 16v-4h2v4l3 1.5v2L13 21v-9h-2z"/></svg>`;
+}
 </file>
 
 <file path=".gitignore">
@@ -3366,6 +2835,689 @@ dist
 .profile
 .pki
 .vercel
+</file>
+
+<file path="apps/src/api.js">
+// Spotify R1 Player - API & Data Fetching
+import { state } from './state.js';
+import { refreshToken, saveToken, saveVolume } from './auth.js';
+
+// Local showToast to avoid circular dependency with ui.js
+function showToast(msg, type = 'info') {
+  let el = document.querySelector('.toast');
+  if (el) el.remove();
+  el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  document.getElementById('app').appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, type === 'error' ? 4000 : 2500);
+}
+
+// ============ Spotify API Helpers ============
+
+export async function api(endpoint, options = {}) {
+  if (Date.now() >= state.tokenExpiry - 60000) {
+    const refreshed = await refreshToken();
+    if (!refreshed) {
+      state.currentView = 'login';
+      return null;
+    }
+  }
+
+  const res = await fetch(`https://api.spotify.com/v1${endpoint}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${state.accessToken}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+
+  if (res.status === 401) {
+    const refreshed = await refreshToken();
+    if (refreshed) return api(endpoint, options);
+    state.currentView = 'login';
+    return null;
+  }
+
+  if (res.status === 204) return {};
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ============ Spotify Web Playback SDK ============
+
+// Define callback globally before SDK loads
+window.onSpotifyWebPlaybackSDKReady = () => {
+  if (state.accessToken && !state.player) {
+    createPlayer();
+  }
+};
+
+export function initPlayer() {
+  if (window.Spotify && state.accessToken && !state.player) {
+    createPlayer();
+  }
+}
+
+function createPlayer() {
+  if (state.player) return;
+
+  state.player = new Spotify.Player({
+    name: 'Rabbit R1',
+    getOAuthToken: async (cb) => {
+      if (Date.now() >= state.tokenExpiry - 60000) await refreshToken();
+      cb(state.accessToken);
+    },
+    volume: state.volume
+  });
+
+  state.player.addListener('ready', ({ device_id }) => {
+    state.deviceId = device_id;
+    transferPlayback(device_id);
+  });
+
+  state.player.addListener('not_ready', () => {
+    state.deviceId = null;
+  });
+
+  state.player.addListener('player_state_changed', (playerState) => {
+    if (!playerState) {
+      state.isPlaying = false;
+      state.currentTrack = null;
+      // Don't call render() here to avoid circular dependency
+      return;
+    }
+
+    state.isPlaying = !playerState.paused;
+    state.progressMs = playerState.position;
+    state.durationMs = playerState.duration;
+
+    const track = playerState.track_window.current_track;
+    if (track) {
+      state.currentTrack = {
+        name: track.name,
+        artist: track.artists.map(a => a.name).join(', '),
+        album: track.album.name,
+        artwork: track.album.images[0]?.url || '',
+        uri: track.uri
+      };
+    }
+
+    // Emit event instead of calling render to avoid circular dependency
+    window.dispatchEvent(new CustomEvent('playerStateChanged'));
+    startProgressTimer();
+  });
+
+  state.player.addListener('initialization_error', ({ message }) => {
+    console.error('Player init error:', message);
+  });
+
+  state.player.addListener('authentication_error', ({ message }) => {
+    console.error('Auth expired:', message);
+    state.currentView = 'login';
+    // Emit event instead of calling render to avoid circular dependency
+    window.dispatchEvent(new CustomEvent('authError'));
+  });
+
+  state.player.connect();
+}
+
+async function transferPlayback(devId) {
+  await api('/me/player', {
+    method: 'PUT',
+    body: JSON.stringify({ device_ids: [devId], play: false })
+  });
+}
+
+// ============ Playback Controls ============
+
+export async function togglePlayback() {
+  if (!state.deviceId) {
+    showToast('No player connected', 'error');
+    return;
+  }
+  if (state.isPlaying) {
+    await api('/me/player/pause', { method: 'PUT' });
+  } else {
+    await api('/me/player/play', { method: 'PUT' });
+  }
+}
+
+export async function nextTrack() {
+  await api('/me/player/next', { method: 'POST' });
+}
+
+export async function prevTrack() {
+  await api('/me/player/previous', { method: 'POST' });
+}
+
+export async function playContext(contextUri, offset = 0) {
+  if (!state.deviceId) {
+    showToast('Connecting…', 'info');
+    return;
+  }
+  await api(`/me/player/play?device_id=${state.deviceId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      context_uri: contextUri,
+      offset: { position: offset },
+      position_ms: 0
+    })
+  });
+}
+
+export async function playTrackInContext(contextUri, trackUri) {
+  if (!state.deviceId) {
+    showToast('Connecting…', 'info');
+    return;
+  }
+  const body = {};
+  if (contextUri && !contextUri.startsWith('spotify:track:')) {
+    body.context_uri = contextUri;
+    body.offset = { uri: trackUri };
+  } else {
+    body.uris = [trackUri];
+  }
+  body.position_ms = 0;
+  await api(`/me/player/play?device_id=${state.deviceId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body)
+  });
+}
+
+export async function adjustVolume(delta) {
+  state.volume = Math.max(0, Math.min(1, state.volume + delta));
+  if (state.player) state.player.setVolume(state.volume);
+  saveVolume(state.volume);
+  window.dispatchEvent(new CustomEvent('volumeChanged'));
+}
+
+// ============ Data Fetching ============
+
+export async function fetchPlaylists() {
+  const data = await api('/me/playlists?limit=50');
+  if (data && data.items) {
+    state.playlists = data.items.map(p => ({
+      id: p.id,
+      name: p.name,
+      image: p.images?.[0]?.url || '',
+      uri: p.uri,
+      trackCount: p.tracks?.total || 0,
+      owner: p.owner?.display_name || ''
+    }));
+  }
+}
+
+export async function fetchPlaylistTracks(playlistId) {
+  try {
+    if (Date.now() >= state.tokenExpiry - 60000) {
+      await refreshToken();
+    }
+    console.log('Fetching playlist tracks for:', playlistId, 'Token:', state.accessToken ? 'exists' : 'missing');
+    const data = await api(`/playlists/${playlistId}/tracks?limit=100`);
+    console.log('Playlist data:', data);
+    if (data && data.items) {
+      state.playlistTracks = data.items
+        .filter(item => item.track && item.track.uri)
+        .map(item => ({
+          name: item.track.name,
+          artist: item.track.artists?.map(a => a.name).join(', ') || '',
+          album: item.track.album?.name || '',
+          artwork: item.track.album?.images?.[0]?.url || '',
+          uri: item.track.uri,
+          durationMs: item.track.duration_ms
+        }));
+    } else {
+      state.playlistTracks = [];
+    }
+  } catch (err) {
+    console.error('Fetch playlist tracks error:', err);
+    showToast('Unable to load playlist. It may be private.', 'error');
+    state.playlistTracks = [];
+  }
+}
+
+export async function fetchHomeSections() {
+  try {
+    const [recentData, topTracksShort, topTracksLong, topArtistsData, savedAlbums, showsData, audiobooksData] = await Promise.all([
+      api('/me/player/recently-played?limit=6'),
+      api('/me/top/tracks?time_range=short_term&limit=6'),
+      api('/me/top/tracks?time_range=long_term&limit=6'),
+      api('/me/top/artists?time_range=medium_term&limit=6'),
+      api('/me/albums?limit=6'),
+      api('/me/shows?limit=6'),
+      api('/me/audiobooks?limit=6')
+    ]);
+
+    state.homeSections = [];
+
+    if (recentData?.items?.length) {
+      const img = recentData.items[0]?.track?.album?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Recents', 
+        image: img,
+        categoryType: 'recents',
+        contentType: 'music'
+      });
+    }
+
+    if (topTracksShort?.items?.length) {
+      const img = topTracksShort.items[0]?.album?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Jump Back In', 
+        image: img,
+        categoryType: 'jump-back-in',
+        contentType: 'music'
+      });
+    }
+
+    if (topArtistsData?.items?.length) {
+      const img = topArtistsData.items[0]?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Your Top Artists', 
+        image: img,
+        categoryType: 'top-artists',
+        contentType: 'music'
+      });
+    }
+
+    if (topTracksLong?.items?.length) {
+      const img = topTracksLong.items[0]?.album?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'All-Time Favourites', 
+        image: img,
+        categoryType: 'all-time-favourites',
+        contentType: 'music'
+      });
+    }
+
+    if (savedAlbums?.items?.length) {
+      const img = savedAlbums.items[0]?.album?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Saved Albums', 
+        image: img,
+        categoryType: 'saved-albums',
+        contentType: 'music'
+      });
+    }
+
+    if (showsData?.items?.length) {
+      const img = showsData.items[0]?.show?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Your Podcasts', 
+        image: img,
+        categoryType: 'podcasts',
+        contentType: 'podcasts'
+      });
+    }
+
+    if (audiobooksData?.items?.length) {
+      const img = audiobooksData.items[0]?.images?.[0]?.url || '';
+      state.homeSections.push({ 
+        title: 'Your Audiobooks', 
+        image: img,
+        categoryType: 'audiobooks',
+        contentType: 'audiobooks'
+      });
+    }
+
+    if (state.playlists.length) {
+      const madeForYou = state.playlists.filter(p => 
+        p.owner === 'Spotify' || 
+        p.name.toLowerCase().includes('daily mix') ||
+        p.name.toLowerCase().includes('discover') ||
+        p.name.toLowerCase().includes('release radar') ||
+        p.name.toLowerCase().includes('repeat') ||
+        p.name.toLowerCase().includes('on repeat') ||
+        p.name.toLowerCase().includes('time capsule')
+      );
+      if (madeForYou.length) {
+        state.homeSections.push({
+          title: 'Made For You',
+          image: madeForYou[0]?.image || '',
+          categoryType: 'made-for-you',
+          contentType: 'music'
+        });
+      }
+
+      const dailyMixes = state.playlists.filter(p => 
+        p.name.toLowerCase().includes('daily mix')
+      );
+      if (dailyMixes.length) {
+        state.homeSections.push({
+          title: 'Daily Mixes',
+          image: dailyMixes[0]?.image || '',
+          categoryType: 'daily-mixes',
+          contentType: 'music'
+        });
+      }
+
+      state.homeSections.push({ 
+        title: 'Your Library', 
+        image: state.playlists[0]?.image || '',
+        categoryType: 'library',
+        contentType: 'music'
+      });
+    }
+  } catch (err) {
+    console.error('Home sections error:', err);
+    state.homeSections = [];
+  }
+}
+
+export async function fetchArtist(artistId) {
+  const artist = await api(`/artists/${artistId}`);
+  if (!artist) return null;
+
+  // 2. BACKDOOR: Safer search query with lower limit to bypass 400/403 restrictions
+  let searchRes = await api(`/search?q=${encodeURIComponent('artist:' + artist.name)}&type=track,album&limit=20`);
+  
+  // Fallback if the strict artist search still fails
+  if (!searchRes || searchRes.error) {
+    searchRes = await api(`/search?q=${encodeURIComponent(artist.name)}&type=track,album&limit=20`);
+  }
+  
+  const tracks = searchRes?.tracks?.items || [];
+  const albumsList = searchRes?.albums?.items || [];
+
+  // Filter by ID or Name to catch collaborations
+  const topTracks = tracks.filter(t => t.artists.some(a => a.id === artistId || a.name === artist.name)).slice(0, 5);
+  const exactAlbums = albumsList.filter(a => a.artists.some(a => a.id === artistId || a.name === artist.name));
+
+  state.artistData = {
+    id: artist.id,
+    name: artist.name,
+    image: artist.images?.[0]?.url || '',
+    followers: artist.followers?.total || 0,
+    uri: artist.uri,
+    topTracks: topTracks.map(t => ({
+      name: t.name,
+      artist: t.artists?.map(a => a.name).join(', '),
+      artwork: t.album?.images?.[0]?.url || '',
+      uri: t.uri,
+      contextUri: t.album?.uri || '',
+      durationMs: t.duration_ms
+    })),
+    albums: exactAlbums.filter(a => a.album_type === 'album').map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'album'
+    })),
+    singles: exactAlbums.filter(a => a.album_type === 'single').map(a => ({
+      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'single'
+    }))
+  };
+  return state.artistData;
+}
+
+export async function fetchAlbumTracks(albumId) {
+  const data = await api(`/albums/${albumId}`);
+  if (data) {
+    state.selectedAlbum = {
+      id: data.id,
+      name: data.name,
+      image: data.images?.[0]?.url || '',
+      artist: data.artists?.map(a => a.name).join(', ') || '',
+      uri: data.uri,
+      year: data.release_date?.substring(0, 4) || ''
+    };
+    state.albumTracks = (data.tracks?.items || []).map(t => ({
+      name: t.name,
+      artist: t.artists?.map(a => a.name).join(', ') || '',
+      uri: t.uri,
+      durationMs: t.duration_ms,
+      artwork: data.images?.[0]?.url || ''
+    }));
+  }
+}
+
+export async function searchSpotify(query) {
+  if (!query.trim()) { state.searchResults = []; return; }
+  const data = await api(`/search?q=${encodeURIComponent(query)}&type=artist,album,track,playlist&limit=5`);
+  if (!data) return;
+
+  state.searchResults = [];
+  if (data.artists?.items) {
+    data.artists.items.forEach(a => {
+      state.searchResults.push({
+        type: 'Artist', name: a.name, subtitle: '',
+        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
+      });
+    });
+  }
+  if (data.albums?.items) {
+    data.albums.items.forEach(a => {
+      state.searchResults.push({
+        type: 'Album', name: a.name, subtitle: a.artists?.[0]?.name || '',
+        artwork: a.images?.[0]?.url || '', id: a.id, uri: a.uri
+      });
+    });
+  }
+  if (data.tracks?.items) {
+    data.tracks.items.forEach(t => {
+      state.searchResults.push({
+        type: 'Song', name: t.name,
+        subtitle: t.artists?.map(a => a.name).join(', ') || '',
+        artwork: t.album?.images?.[0]?.url || '',
+        uri: t.uri, contextUri: t.album?.uri || ''
+      });
+    });
+  }
+  if (data.playlists?.items) {
+    data.playlists.items.filter(Boolean).forEach(p => {
+      state.searchResults.push({
+        type: 'Playlist', name: p.name, subtitle: p.owner?.display_name || '',
+        artwork: p.images?.[0]?.url || '', uri: p.uri, id: p.id
+      });
+    });
+  }
+}
+
+export function formatFollowers(n) {
+  if (!n || n === 0) return '';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'K';
+  return n.toString();
+}
+
+// ============ Progress Timer ============
+
+export function startProgressTimer() {
+  stopProgressTimer();
+  if (!state.isPlaying) return;
+  state.progressInterval = setInterval(() => {
+    if (state.isPlaying) {
+      state.progressMs += 500;
+      if (state.progressMs > state.durationMs) state.progressMs = state.durationMs;
+      window.dispatchEvent(new CustomEvent('progressTick'));
+    }
+  }, 500);
+}
+
+export function stopProgressTimer() {
+  if (state.progressInterval) { clearInterval(state.progressInterval); state.progressInterval = null; }
+}
+
+
+
+export async function fetchSectionItems(categoryType) {
+  try {
+    let data;
+    switch (categoryType) {
+      case 'recents':
+        data = await api('/me/player/recently-played?limit=20');
+        if (data?.items) {
+          const seen = new Set();
+          state.currentSection.items = data.items.filter(i => {
+            if (!i.track?.uri || seen.has(i.track.uri)) return false;
+            seen.add(i.track.uri);
+            return true;
+          }).map(i => ({
+            name: i.track.name,
+            artist: i.track.artists?.[0]?.name || '',
+            image: i.track.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: i.track.uri
+          }));
+        }
+        break;
+
+      case 'made-for-you':
+        state.currentSection.items = state.playlists.filter(p => 
+          p.owner === 'Spotify' || 
+          p.name.toLowerCase().includes('daily mix') ||
+          p.name.toLowerCase().includes('discover') ||
+          p.name.toLowerCase().includes('release radar') ||
+          p.name.toLowerCase().includes('repeat')
+        ).map(p => ({
+          name: p.name,
+          artist: p.owner || 'Spotify',
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }));
+        break;
+
+      case 'jump-back-in':
+        data = await api('/me/top/tracks?time_range=short_term&limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(t => ({
+            name: t.name,
+            artist: t.artists?.[0]?.name || '',
+            image: t.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: t.uri
+          }));
+        }
+        break;
+
+      case 'top-artists':
+        data = await api('/me/top/artists?time_range=medium_term&limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(a => ({
+            name: a.name,
+            artist: '',
+            image: a.images?.[0]?.url || '',
+            type: 'artist',
+            uri: a.uri,
+            id: a.id
+          }));
+        }
+        break;
+
+      case 'all-time-favourites':
+        data = await api('/me/top/tracks?time_range=long_term&limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(t => ({
+            name: t.name,
+            artist: t.artists?.[0]?.name || '',
+            image: t.album?.images?.[0]?.url || '',
+            type: 'track',
+            uri: t.uri
+          }));
+        }
+        break;
+
+      case 'saved-albums':
+        data = await api('/me/albums?limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(item => ({
+            name: item.album.name,
+            artist: item.album.artists?.[0]?.name || '',
+            image: item.album.images?.[0]?.url || '',
+            type: 'album',
+            uri: item.album.uri,
+            id: item.album.id
+          }));
+        }
+        break;
+
+      case 'podcasts':
+        data = await api('/me/shows?limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(item => ({
+            name: item.show.name,
+            artist: item.show.publisher || '',
+            image: item.show.images?.[0]?.url || '',
+            type: 'show',
+            uri: item.show.uri,
+            id: item.show.id
+          }));
+        }
+        break;
+
+      case 'audiobooks':
+        data = await api('/me/audiobooks?limit=20');
+        if (data?.items) {
+          state.currentSection.items = data.items.map(item => ({
+            name: item.name,
+            artist: item.authors?.[0]?.name || '',
+            image: item.images?.[0]?.url || '',
+            type: 'audiobook',
+            uri: item.uri,
+            id: item.id
+          }));
+        }
+        break;
+
+      case 'daily-mixes':
+        state.currentSection.items = state.playlists.filter(p => 
+          p.name.toLowerCase().includes('daily mix')
+        ).map(p => ({
+          name: p.name,
+          artist: 'Spotify',
+          image: p.image,
+          type: 'playlist',
+          uri: p.uri,
+          id: p.id
+        }));
+        break;
+
+      case 'library': {
+        const [libAlbums, libArtists, libShows] = await Promise.all([
+          api('/me/albums?limit=50'),
+          api('/me/following?type=artist&limit=50'),
+          api('/me/shows?limit=50')
+        ]);
+        let allItems = [];
+        allItems.push(...state.playlists.map(p => ({
+          name: p.name, artist: `${p.trackCount || 0} tracks`, image: p.image,
+          type: 'playlist', uri: p.uri, id: p.id, filterType: 'playlists'
+        })));
+        if (libAlbums?.items) {
+          allItems.push(...libAlbums.items.map(item => ({
+            name: item.album.name, artist: item.album.artists?.[0]?.name || '',
+            image: item.album.images?.[0]?.url || '', type: 'album',
+            uri: item.album.uri, id: item.album.id, filterType: 'albums'
+          })));
+        }
+        if (libArtists?.artists?.items) {
+          allItems.push(...libArtists.artists.items.map(a => ({
+            name: a.name, artist: '', image: a.images?.[0]?.url || '',
+            type: 'artist', uri: a.uri, id: a.id, filterType: 'artists'
+          })));
+        }
+        if (libShows?.items) {
+          allItems.push(...libShows.items.map(item => ({
+            name: item.show.name, artist: item.show.publisher || '',
+            image: item.show.images?.[0]?.url || '', type: 'show',
+            uri: item.show.uri, id: item.show.id, filterType: 'podcasts'
+          })));
+        }
+        state.currentSection.items = allItems;
+        state.currentSection.hasFilters = true;
+        state.currentSection.filterOptions = ['all', 'playlists', 'albums', 'artists', 'podcasts'];
+        break;
+      }
+
+      default:
+        state.currentSection.items = [];
+    }
+  } catch (err) {
+    console.error('Fetch section items error:', err);
+    state.currentSection.items = [];
+  }
+}
 </file>
 
 <file path="qr.html">
@@ -3430,12 +3582,34 @@ dist
 
 A native Spotify player for the Rabbit R1, featuring playlist browsing, search, and full playback control via the Spotify Web Playback SDK.
 
+## The November 2024 Spotify API Restrictions
+
+In November 2024, Spotify significantly tightened API access for non-Enterprise developers by locking down several key endpoints:
+
+- `/artists/{id}/related-artists` — Returns 403 Forbidden
+- `/artists/{id}/albums` — Returns 403 Forbidden  
+- `/artists/{id}/top-tracks` — Returns 403 Forbidden
+- `/me/following` and `/me/following/contains` — Returns 403 Forbidden
+
+These restrictions apply to developers without Extended Quota Mode (Enterprise tier). This is likely why the native Rabbit R1 Spotify app broke, as it relied on these now-restricted endpoints.
+
+## App Limitations
+
+Due to these API restrictions, this app uses a clever backdoor approach:
+
+- **Artist Catalog**: Uses the `/search` endpoint to fetch artist tracks and albums, bypassing the locked-down `/albums` and `/top-tracks` endpoints
+- **No Follow Button**: The `/me/following` endpoints are restricted, so the Follow feature is not available
+- **No Monthly Listeners**: Some artist metadata may be limited due to endpoint restrictions
+
+The search backdoor works reliably for most artists, but may occasionally return fewer results for artists with very common names or complex collaborations.
+
 ## Features
 
 - **Spotify Authentication** — OAuth 2.0 PKCE flow, no server required
 - **Library Browsing** — View and play your playlists
-- **Search** — Find tracks and playlists directly on R1
+- **Search** — Find tracks, albums, artists, and playlists
 - **Now Playing** — Album art, progress bar, play/pause/skip controls
+- **Artist View** — Full-screen hero with artist info, top tracks, albums, and singles
 - **Progressive Disclosure** — Vertical scroll through lists, drill into playlists, now playing expands
 - **R1 Hardware Integration**
   - Scroll wheel: Volume on Now Playing, navigate lists elsewhere
@@ -3446,26 +3620,85 @@ A native Spotify player for the Rabbit R1, featuring playlist browsing, search, 
 
 ## Setup
 
-### 1. Create a Spotify App
+### 1. Create a Spotify Developer Account
 
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-2. Create a new app
-3. Add your deployed URL + `/callback.html` as a Redirect URI (e.g. `https://your-app.vercel.app/callback.html`)
-4. Select **Web API** and **Web Playback SDK**
+2. Log in with your Spotify account (Premium required)
+3. Click "Create App"
+4. Name your app (e.g., "Spotify for R1")
 5. Copy your **Client ID**
 
-### 2. Configure
+### 2. Configure Redirect URIs
 
-Edit `apps/src/main.js` and set your Client ID:
+In your Spotify Developer Dashboard:
 
-```js
-const CONFIG = {
+1. Open your app settings
+2. Go to "Redirect URIs"
+3. Add your deployed URL + `/callback.html` (e.g., `https://your-app.vercel.app/callback.html`)
+4. For local development, also add `http://localhost:5173/callback.html`
+
+### 3. Configure the App
+
+Edit `apps/src/state.js` and set your Client ID:
+
+```javascript
+export const CONFIG = {
   clientId: 'YOUR_CLIENT_ID_HERE',
+  redirectUri: `${window.location.origin}/callback.html`,
   ...
 };
 ```
 
-### 3. Development
+### 4. Deploy the App
+
+#### Deploy to Vercel
+
+```bash
+cd apps
+npm install
+npm run build
+npx vercel login
+npx vercel deploy --prod
+```
+
+#### Deploy to Netlify
+
+```bash
+cd apps
+npm install
+npm run build
+npx netlify-cli deploy --prod --dir=dist
+```
+
+### 5. Update URLs After Deployment
+
+After deploying, update the following files with your deployed URL:
+
+**In `apps/public/qr.html`:**
+```javascript
+const creationData = {
+  title: "Spotify",
+  url: "https://your-app.vercel.app", // Your deployed URL
+  iconUrl: "https://your-app.vercel.app/icon.svg",
+  themeColor: "#1DB954"
+};
+```
+
+**In `apps/src/state.js`:**
+```javascript
+redirectUri: `${window.location.origin}/callback.html`, // Will use deployed URL automatically
+```
+
+### 6. Install on Rabbit R1
+
+1. Open `https://your-app.vercel.app/qr.html` in your browser
+2. Point your R1's camera at the QR code
+3. It will register as a creation in your R1's creations list
+4. Launch it from your R1's home screen
+
+## Development
+
+### Local Development
 
 ```bash
 cd apps
@@ -3474,8 +3707,6 @@ npm run dev
 ```
 
 Open http://localhost:5173 to test in your browser.
-
-For local dev, add `http://localhost:5173/callback.html` as a Redirect URI in your Spotify app settings.
 
 ### Keyboard Controls (Dev Mode)
 
@@ -3492,41 +3723,19 @@ npm run build
 
 Output in `dist/`.
 
-## Deployment
-
-### Deploy to Vercel
-
-```bash
-cd apps
-npx vercel login
-npx vercel deploy --prod
-```
-
-### Deploy to Netlify
-
-```bash
-cd apps
-npm run build
-npx netlify-cli deploy --prod --dir=dist
-```
-
-After deploying, update your Spotify app's Redirect URI to match (e.g. `https://your-app.vercel.app/callback.html`).
-
-### QR Code Installation
-
-Update `qr.html` with your deployed URL, then scan with your R1's camera to install as a creation.
-
 ## Architecture
 
 - **Auth**: OAuth 2.0 PKCE (client-side, no backend needed)
 - **Playback**: Spotify Web Playback SDK (requires Premium)
 - **API**: Spotify Web API for library, search, playback control
-- **Storage**: R1 `creationStorage` API with localStorage fallback
+- **State Management**: Centralized state object in `state.js`
+- **Modular Design**: Split into `state.js`, `auth.js`, `api.js`, `ui.js`, `main.js`
 
 ## Requirements
 
 - Spotify Premium account (required for Web Playback SDK)
 - Rabbit R1 with Creations SDK support
+- Node.js 18+ (for development)
 
 ## Tech Stack
 
@@ -3632,6 +3841,7 @@ html, body {
 /* ========== Filter Bar ========== */
 .filter-bar {
   display: flex;
+  justify-content: center;
   gap: 6px;
   padding: 6px 8px;
   background: #121212;
@@ -3913,24 +4123,27 @@ html, body {
   overflow: hidden;
 }
 
-.artist-hero {
+.artist-hero-card {
   width: 240px;
-  height: 210px;
+  height: 238px;
   background-size: cover;
   background-position: center top;
   position: relative;
-  flex-shrink: 0;
-}
-
-.artist-hero-overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0.05) 30%, rgba(18,18,18,0.85) 75%, #121212 100%);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 8px 10px;
+  padding: 12px;
+  flex-shrink: 0;
+  transition: transform 0.25s, opacity 0.25s;
+  opacity: 0.7;
+  transform: scale(0.97);
+  cursor: pointer;
 }
+.artist-hero-card.focused { opacity: 1; transform: scale(1); }
+.artist-hero-content { margin-top: auto; margin-bottom: 16px; }
+.scroll-down-indicator { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); color: #b3b3b3; animation: bounce 2s infinite; }
+.scroll-down-indicator svg { width: 16px; height: 16px; }
+@keyframes bounce { 0%, 20%, 50%, 80%, 100% { transform: translate(-50%, 0); } 40% { transform: translate(-50%, -4px); } 60% { transform: translate(-50%, -2px); } }
 
 .artist-back {
   width: 22px;
@@ -3945,37 +4158,10 @@ html, body {
   justify-content: center;
   -webkit-tap-highlight-color: transparent;
 }
-
-.artist-back svg {
-  width: 14px;
-  height: 14px;
-}
-
-.artist-hero-bottom {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.artist-name {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.6);
-}
-
-.artist-stats {
-  font-size: 8px;
-  color: #b3b3b3;
-}
-
-.artist-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-
+.artist-back svg { width: 14px; height: 14px; }
+.artist-name { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+.artist-stats { font-size: 8px; color: #b3b3b3; }
+.artist-actions { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .artist-play-btn, .artist-follow-btn {
   border: none;
   border-radius: 14px;
@@ -3989,56 +4175,10 @@ html, body {
   -webkit-tap-highlight-color: transparent;
   transition: transform 0.1s;
 }
-
-.artist-play-btn {
-  background: #1DB954;
-  color: #000;
-}
-
-.artist-follow-btn {
-  background: transparent;
-  color: #fff;
-  border: 1px solid #b3b3b3;
-}
-
-.artist-play-btn svg, .artist-follow-btn svg {
-  width: 10px;
-  height: 10px;
-}
-
-.artist-play-btn:active, .artist-follow-btn:active {
-  transform: scale(0.93);
-}
-
-.artist-explore {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.artist-expand {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #b3b3b3;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 6px 12px;
-  border-radius: 20px;
-  background: #1a1a1a;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.artist-expand:active {
-  background: #282828;
-}
-
-.artist-expand svg {
-  width: 12px;
-  height: 12px;
-}
+.artist-play-btn { background: #1DB954; color: #000; }
+.artist-follow-btn { background: transparent; color: #fff; border: 1px solid #b3b3b3; }
+.artist-play-btn svg, .artist-follow-btn svg { width: 10px; height: 10px; }
+.artist-play-btn:active, .artist-follow-btn:active { transform: scale(0.93); }
 
 /* ========== Onboarding Overlay ========== */
 .onboarding-overlay {
@@ -4436,27 +4576,35 @@ html, body {
 import { state } from './state.js';
 import { loadToken, refreshToken, startAuth, handleCallback, loadVolume } from './auth.js';
 import { fetchPlaylists, fetchHomeSections, initPlayer, togglePlayback, nextTrack, prevTrack, adjustVolume } from './api.js';
-import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding } from './ui.js';
+import { render, navigate, goBack, scrollFocusedIntoView, getListLength, showOnboarding, updateNowPlaying, updateProgressBar, showVolumeToast, triggerHaptic } from './ui.js';
 
 // ============ R1 Hardware Events ============
 
-window.addEventListener('scrollUp', () => handleScroll(-1));
-window.addEventListener('scrollDown', () => handleScroll(1));
+window.addEventListener('scrollUp', () => handleScroll(-1, true));
+window.addEventListener('scrollDown', () => handleScroll(1, true));
 
-function handleScroll(dir) {
+let lastScrollTime = 0;
+const SCROLL_COOLDOWN = 120; // 120ms cooldown for hardware wheel
+
+function handleScroll(dir, isHardware = false) {
+  const now = Date.now();
+  if (isHardware && now - lastScrollTime < SCROLL_COOLDOWN) return;
+  if (isHardware) lastScrollTime = now;
+
   if (state.currentView === 'nowplaying') {
     adjustVolume(dir * -0.05);
-  } else if (state.currentView === 'artist') {
-    // no scroll on artist hero, just trigger explore
+    triggerHaptic(); 
   } else {
     const maxIdx = getListLength() - 1;
     if (maxIdx < 0) return;
 
-    // Simple math bounds calculation
+    const prevIndex = state.scrollIndex;
     state.scrollIndex = Math.max(0, Math.min(maxIdx, state.scrollIndex + dir));
 
-    // Update visuals and scroll position
-    scrollFocusedIntoView();
+    if (prevIndex !== state.scrollIndex) {
+      triggerHaptic();
+      scrollFocusedIntoView();
+    }
   }
 }
 
@@ -4471,6 +4619,24 @@ window.addEventListener('sideClick', () => {
     const focused = document.querySelector('.cat-card.focused, .content-card.focused');
     if (focused) focused.click();
   }
+});
+
+// ============ Custom Event Listeners ============
+
+window.addEventListener('playerStateChanged', () => {
+  updateNowPlaying();
+});
+
+window.addEventListener('authError', () => {
+  render(); // Re-render to show the login view safely
+});
+
+window.addEventListener('progressTick', () => {
+  updateProgressBar();
+});
+
+window.addEventListener('volumeChanged', () => {
+  showVolumeToast();
 });
 
 // ============ Touch & Wheel Scroll ============
@@ -4493,10 +4659,10 @@ document.addEventListener('touchmove', (e) => {
 
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      handleScroll(1);
+      handleScroll(1, false);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      handleScroll(-1);
+      handleScroll(-1, false);
       touchAccumulated += TOUCH_STEP_PX;
     }
   }
@@ -4509,10 +4675,10 @@ document.addEventListener('wheel', (e) => {
   touchAccumulated += e.deltaY;
   while (Math.abs(touchAccumulated) >= TOUCH_STEP_PX) {
     if (touchAccumulated > 0) {
-      handleScroll(1);
+      handleScroll(1, false);
       touchAccumulated -= TOUCH_STEP_PX;
     } else {
-      handleScroll(-1);
+      handleScroll(-1, false);
       touchAccumulated += TOUCH_STEP_PX;
     }
   }

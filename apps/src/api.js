@@ -370,41 +370,82 @@ export async function fetchArtist(artistId) {
   const artist = await api(`/artists/${artistId}`);
   if (!artist) return null;
 
-  // 2. BACKDOOR: Safer search query with lower limit to bypass 400/403 restrictions
-  let searchRes = await api(`/search?q=${encodeURIComponent('artist:' + artist.name)}&type=track,album&limit=20`);
-  
-  // Fallback if the strict artist search still fails
-  if (!searchRes || searchRes.error) {
-    searchRes = await api(`/search?q=${encodeURIComponent(artist.name)}&type=track,album&limit=20`);
-  }
-  
-  const tracks = searchRes?.tracks?.items || [];
-  const albumsList = searchRes?.albums?.items || [];
+  // Run all fetches in parallel
+  const [albumsRes, searchRes, recsRes] = await Promise.allSettled([
+    api(`/artists/${artistId}/albums?include_groups=album,single,appears_on&limit=50&market=from_token`),
+    api(`/search?q=artist:"${encodeURIComponent(artist.name)}"&type=track&limit=10&market=from_token`),
+    api(`/recommendations?seed_artists=${artistId}&limit=10`)
+  ]);
 
-  // Filter by ID or Name to catch collaborations
-  const topTracks = tracks.filter(t => t.artists.some(a => a.id === artistId || a.name === artist.name)).slice(0, 5);
-  const exactAlbums = albumsList.filter(a => a.artists.some(a => a.id === artistId || a.name === artist.name));
+  // 2. Discography from albums endpoint
+  const albumsList = albumsRes.status === 'fulfilled' ? albumsRes.value?.items || [] : [];
+  
+  const albums = [];
+  const singles = [];
+  const appearsOn = [];
+  const seenIds = new Set();
+
+  albumsList.forEach(item => {
+    if (seenIds.has(item.id)) return;
+    seenIds.add(item.id);
+
+    const mapped = {
+      id: item.id,
+      name: item.name,
+      image: item.images?.[0]?.url || '',
+      uri: item.uri,
+      year: item.release_date?.slice(0, 4) || ''
+    };
+
+    if (item.album_group === 'album') {
+      albums.push(mapped);
+    } else if (item.album_group === 'single') {
+      singles.push(mapped);
+    } else if (item.album_group === 'appears_on') {
+      appearsOn.push(mapped);
+    }
+  });
+
+  // 3. Top tracks via search workaround
+  const tracks = searchRes.status === 'fulfilled' ? searchRes.value?.tracks?.items || [] : [];
+  const topTracks = tracks
+    .filter(t => t.artists.some(a => a.id === artistId))
+    .slice(0, 5)
+    .map(t => ({
+      name: t.name,
+      artist: t.artists.map(a => a.name).join(', '),
+      artwork: t.album?.images?.[0]?.url || '',
+      uri: t.uri,
+      contextUri: t.album?.uri || '',
+      durationMs: t.duration_ms
+    }));
+
+  // 4. Related artists from recommendations
+  const recsTracks = recsRes.status === 'fulfilled' ? recsRes.value?.tracks || [] : [];
+  const relatedArtists = recsTracks
+    .map(t => t.artists[0])
+    .filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i)
+    .filter(a => a.id !== artistId)
+    .map(a => ({
+      id: a.id,
+      name: a.name,
+      image: '',
+      uri: a.uri
+    }));
 
   state.artistData = {
     id: artist.id,
     name: artist.name,
     image: artist.images?.[0]?.url || '',
     followers: artist.followers?.total || 0,
+    genres: artist.genres || [],
+    popularity: artist.popularity || 0,
     uri: artist.uri,
-    topTracks: topTracks.map(t => ({
-      name: t.name,
-      artist: t.artists?.map(a => a.name).join(', '),
-      artwork: t.album?.images?.[0]?.url || '',
-      uri: t.uri,
-      contextUri: t.album?.uri || '',
-      durationMs: t.duration_ms
-    })),
-    albums: exactAlbums.filter(a => a.album_type === 'album').map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'album'
-    })),
-    singles: exactAlbums.filter(a => a.album_type === 'single').map(a => ({
-      id: a.id, name: a.name, image: a.images?.[0]?.url || '', uri: a.uri, type: 'single'
-    }))
+    topTracks,
+    albums,
+    singles,
+    appearsOn,
+    related: relatedArtists
   };
   return state.artistData;
 }
