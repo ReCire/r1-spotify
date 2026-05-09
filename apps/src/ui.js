@@ -427,7 +427,7 @@ function renderArtist(app) {
 
   const discTotal = (a.albums || []).length + (a.singles || []).length;
   if (discTotal > 0) {
-    const discIdx = 1 + allItems.length; // hero is 0, tracks are 1..n
+    const discIdx = nextIdx;
     const discCard = document.createElement('div');
     discCard.className = `cat-card ${discIdx === state.scrollIndex ? 'focused' : ''}`;
     discCard.dataset.idx = discIdx;
@@ -861,7 +861,7 @@ export function getListLength() {
     const d = state.discographyFilter;
     let count = 1; // hero card
     if (d === 'popular') count += (a.topTracks || []).length;
-    if (d === 'about') count += 1; // about card
+    if (d === 'all' || d === 'about') count += 1; // about card
     const discTotal = (a.albums || []).length + (a.singles || []).length;
     if (discTotal > 0) count += 1; // discography nav card
     return count;
