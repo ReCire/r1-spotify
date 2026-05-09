@@ -250,6 +250,7 @@ html, body {
   color: #fff;
   letter-spacing: -0.2px;
 }
+.cat-card-sub { font-size: 8px; color: #b3b3b3; margin-top: 1px; }
 
 .cat-card-content .chevron-right {
   width: 14px;

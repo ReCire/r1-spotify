@@ -372,20 +372,22 @@ export async function fetchArtist(artistId) {
 
   // Run all fetches in parallel
   const [albumsRes, searchRes, recsRes] = await Promise.allSettled([
-    api(`/artists/${artistId}/albums?include_groups=album,single,appears_on&limit=50&market=from_token`),
+    api(`/search?q=artist:"${encodeURIComponent(artist.name)}"&type=album&limit=50&market=from_token`),
     api(`/search?q=artist:"${encodeURIComponent(artist.name)}"&type=track&limit=10&market=from_token`),
     api(`/recommendations?seed_artists=${artistId}&limit=10`)
   ]);
 
-  // 2. Discography from albums endpoint
-  const albumsList = albumsRes.status === 'fulfilled' ? albumsRes.value?.items || [] : [];
+  // 2. Discography from albums search endpoint
+  const albumsList = albumsRes.status === 'fulfilled' ? albumsRes.value?.albums?.items || [] : [];
+  
+  const filteredAlbumsList = albumsList.filter(a => a.artists?.some(ar => ar.id === artistId));
   
   const albums = [];
   const singles = [];
   const appearsOn = [];
   const seenIds = new Set();
 
-  albumsList.forEach(item => {
+  filteredAlbumsList.forEach(item => {
     if (seenIds.has(item.id)) return;
     seenIds.add(item.id);
 
@@ -397,12 +399,10 @@ export async function fetchArtist(artistId) {
       year: item.release_date?.slice(0, 4) || ''
     };
 
-    if (item.album_group === 'album') {
+    if (item.album_type === 'album') {
       albums.push(mapped);
-    } else if (item.album_group === 'single') {
+    } else if (item.album_type === 'single') {
       singles.push(mapped);
-    } else if (item.album_group === 'appears_on') {
-      appearsOn.push(mapped);
     }
   });
 
@@ -444,7 +444,7 @@ export async function fetchArtist(artistId) {
     topTracks,
     albums,
     singles,
-    appearsOn,
+    appearsOn: [],
     related: relatedArtists
   };
   return state.artistData;

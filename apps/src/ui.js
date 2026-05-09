@@ -18,6 +18,7 @@ export function render() {
     case 'nowplaying': renderNowPlaying(app); break;
     case 'search': renderSearch(app); break;
     case 'artist': renderArtist(app); break;
+    case 'discography': renderDiscography(app); break;
   }
 }
 
@@ -319,7 +320,11 @@ function renderArtist(app) {
     <button class="artist-back" id="artist-back">${chevronLeft()}</button>
     <div class="artist-hero-content">
       <div class="artist-name">${truncate(state.artistData.name, 22)}</div>
-      <div class="artist-stats">${formatFollowers(state.artistData.followers)} followers</div>
+      <div class="artist-stats">${
+        (state.artistData.genres || []).length
+          ? state.artistData.genres.slice(0, 2).map(g => capitalize(g)).join(' · ')
+          : ''
+      }</div>
       <div class="artist-actions">
         <button class="artist-play-btn" id="artist-play">${playIcon()} Play</button>
       </div>
@@ -331,15 +336,10 @@ function renderArtist(app) {
   // Filter bar (not a scroll index item)
   const filterBar = document.createElement('div');
   filterBar.className = 'filter-bar';
-  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related', 'about'];
+  const filters = ['popular', 'about'];
   const a = state.artistData;
   const hasContent = {
-    all: true,
     popular: (a.topTracks || []).length > 0,
-    albums: (a.albums || []).length > 0,
-    singles: (a.singles || []).length > 0,
-    'appears on': (a.appearsOn || []).length > 0,
-    related: (a.related || []).length > 0,
     about: true
   };
   filters.filter(f => hasContent[f]).forEach(f => {
@@ -384,29 +384,9 @@ function renderArtist(app) {
 
   // Content cards (idx 1+)
   let allItems = [];
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') {
+  if (state.discographyFilter === 'popular') {
     (a.topTracks || []).forEach(t => {
       allItems.push({ name: t.name, artist: t.artist, image: t.artwork, type: 'track', uri: t.uri, contextUri: t.contextUri, filterType: 'popular' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
-    (a.albums || []).forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'albums' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
-    (a.singles || []).forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'singles' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') {
-    (a.appearsOn || []).forEach(a => {
-      allItems.push({ name: a.name, artist: a.year, image: a.image, type: 'album', id: a.id, uri: a.uri, filterType: 'appears on' });
-    });
-  }
-  if (state.discographyFilter === 'all' || state.discographyFilter === 'related') {
-    (a.related || []).forEach(a => {
-      allItems.push({ name: a.name, artist: '', image: a.image, type: 'artist', id: a.id, uri: a.uri, filterType: 'related' });
     });
   }
 
@@ -445,16 +425,122 @@ function renderArtist(app) {
     });
   }
 
+  const discTotal = (a.albums || []).length + (a.singles || []).length;
+  if (discTotal > 0) {
+    const discIdx = 1 + allItems.length; // hero is 0, tracks are 1..n
+    const discCard = document.createElement('div');
+    discCard.className = `cat-card ${discIdx === state.scrollIndex ? 'focused' : ''}`;
+    discCard.dataset.idx = discIdx;
+    discCard.style.background = '#282828';
+    discCard.innerHTML = `<div class="cat-card-content">
+      <span class="cat-card-title">Discography</span>
+      <span class="cat-card-sub">${discTotal} release${discTotal !== 1 ? 's' : ''}</span>
+      ${chevronRight()}
+    </div>`;
+    discCard.addEventListener('click', () => {
+      state.discographyFilter = 'all';
+      state.scrollIndex = 0;
+      navigate('discography');
+    });
+    container.appendChild(discCard);
+  }
+
   app.appendChild(container);
 
   setTimeout(() => {
     document.getElementById('artist-back')?.addEventListener('click', goBack);
     document.getElementById('artist-play')?.addEventListener('click', () => {
-      playContext(state.artistData.uri);
-      navigate('nowplaying');
+      const tracks = state.artistData.topTracks || [];
+      if (tracks.length > 0 && state.deviceId) {
+        api(`/me/player/play?device_id=${state.deviceId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ uris: tracks.map(t => t.uri) })
+        });
+        navigate('nowplaying');
+      } else if (state.deviceId) {
+        playContext(state.artistData.uri);
+        navigate('nowplaying');
+      } else {
+        showToast('Connecting…', 'info');
+      }
     });
   }, 0);
 
+  if (state.currentTrack) app.appendChild(createMiniPlayer());
+  scrollFocusedIntoView();
+}
+
+// ============ Discography View ============
+
+function renderDiscography(app) {
+  if (!state.artistData) { goBack(); return; }
+
+  const header = createHeader(truncate(state.artistData.name, 16), true);
+  app.appendChild(header);
+
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  const filters = ['all', 'albums', 'singles'];
+  filters.forEach(f => {
+    const btn = document.createElement('button');
+    btn.className = `filter-btn ${state.discographyFilter === f ? 'active' : ''}`;
+    btn.textContent = capitalize(f);
+    btn.addEventListener('click', () => {
+      state.discographyFilter = f;
+      state.scrollIndex = 0;
+      render();
+    });
+    filterBar.appendChild(btn);
+  });
+  app.appendChild(filterBar);
+
+  const container = document.createElement('div');
+  container.className = 'list-container';
+  if (state.currentTrack) container.classList.add('with-player');
+  container.id = 'list-container';
+
+  const a = state.artistData;
+  let items = [];
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') {
+    (a.albums || []).forEach(al => {
+      items.push({ name: al.name, artist: al.year, image: al.image, type: 'album', id: al.id, uri: al.uri });
+    });
+  }
+  if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') {
+    (a.singles || []).forEach(s => {
+      items.push({ name: s.name, artist: s.year, image: s.image, type: 'album', id: s.id, uri: s.uri });
+    });
+  }
+
+  if (items.length === 0) {
+    container.innerHTML = `<div class="empty-state">No releases found</div>`;
+  } else {
+    items.forEach((item, i) => {
+      const card = document.createElement('div');
+      card.className = `content-card ${i === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = i;
+      card.style.backgroundImage = `url('${item.image}')`;
+      const sublabel = item.artist
+        ? `<span>Album</span><span class="dot">·</span><span>${item.artist}</span>` 
+        : `<span>Album</span>`;
+      card.innerHTML = `
+        <div class="content-card-overlay"></div>
+        <div class="content-card-content">
+          <div class="content-card-labels">
+            <div class="content-card-name">${truncate(item.name, 26)}</div>
+            <div class="content-card-sub">${sublabel}</div>
+          </div>
+          ${chevronRight()}
+        </div>
+      `;
+      card.addEventListener('click', () => {
+        openAlbum(item.id);
+      });
+      container.appendChild(card);
+    });
+  }
+
+  app.appendChild(container);
   if (state.currentTrack) app.appendChild(createMiniPlayer());
   scrollFocusedIntoView();
 }
@@ -771,15 +857,22 @@ export function getListLength() {
   if (state.currentView === 'search') return state.searchResults.length;
   if (state.currentView === 'artist') {
     if (!state.artistData) return 0;
-    let count = 1; // hero card
-    const d = state.discographyFilter;
     const a = state.artistData;
-    if (d === 'all' || d === 'about') count += 1; // about card
-    if (d === 'all' || d === 'popular') count += (a.topTracks || []).length;
+    const d = state.discographyFilter;
+    let count = 1; // hero card
+    if (d === 'popular') count += (a.topTracks || []).length;
+    if (d === 'about') count += 1; // about card
+    const discTotal = (a.albums || []).length + (a.singles || []).length;
+    if (discTotal > 0) count += 1; // discography nav card
+    return count;
+  }
+  if (state.currentView === 'discography') {
+    if (!state.artistData) return 0;
+    const a = state.artistData;
+    const d = state.discographyFilter;
+    let count = 0;
     if (d === 'all' || d === 'albums') count += (a.albums || []).length;
     if (d === 'all' || d === 'singles') count += (a.singles || []).length;
-    if (d === 'all' || d === 'appears on') count += (a.appearsOn || []).length;
-    if (d === 'all' || d === 'related') count += (a.related || []).length;
     return count;
   }
   return 0;

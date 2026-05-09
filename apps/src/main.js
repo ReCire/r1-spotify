@@ -42,6 +42,9 @@ window.addEventListener('sideClick', () => {
   } else if (state.currentView === 'artist') {
     const focused = document.querySelector('.artist-hero-card.focused, .content-card.focused');
     if (focused) focused.click();
+  } else if (state.currentView === 'discography') {
+    const focused = document.querySelector('.content-card.focused');
+    if (focused) focused.click();
   } else {
     const focused = document.querySelector('.cat-card.focused, .content-card.focused');
     if (focused) focused.click();
