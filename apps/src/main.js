@@ -1785,25 +1785,27 @@ function handleScroll(dir) {
     
     const cardHeight = items[0]?.offsetHeight || 44;
     
-    // If at the top and scrolling down, move selection to sticky position
-    if (scrollIndex === 0 && dir === 1) {
-      scrollIndex = stickyIndex;
+    // Allow normal scrolling near the ends
+    if (scrollIndex < stickyIndex && dir === 1) {
+      // Near top, just increment scrollIndex normally
+      scrollIndex++;
       updateFocusedCard();
       return;
     }
-    // If at bottom and scrolling up, move selection up
-    if (scrollIndex === maxIdx && dir === -1) {
-      scrollIndex = maxIdx - stickyIndex;
+    if (scrollIndex > maxIdx - stickyIndex && dir === -1) {
+      // Near bottom, just decrement scrollIndex normally
+      scrollIndex--;
       updateFocusedCard();
       return;
     }
     
-    // Scroll the container
+    // Use sticky behavior in the middle
+    const scrollTop = container.scrollTop;
     container.scrollTop += dir * cardHeight;
     
     // Update which item appears at sticky position based on scroll
-    const scrollTop = container.scrollTop;
-    const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(scrollTop / cardHeight) + stickyIndex));
+    const newScrollTop = container.scrollTop;
+    const newIndex = Math.min(maxIdx, Math.max(0, Math.floor(newScrollTop / cardHeight) + stickyIndex));
     
     if (newIndex !== scrollIndex && newIndex >= 0 && newIndex <= maxIdx) {
       scrollIndex = newIndex;
