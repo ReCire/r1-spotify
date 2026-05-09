@@ -425,7 +425,9 @@ async function fetchPlaylistTracks(playlistId) {
     if (Date.now() >= tokenExpiry - 60000) {
       await refreshToken();
     }
+    console.log('Fetching playlist tracks for:', playlistId, 'Token:', accessToken ? 'exists' : 'missing');
     const data = await api(`/playlists/${playlistId}/tracks?limit=100&market=from_token`);
+    console.log('Playlist data:', data);
     if (data && data.items) {
       playlistTracks = data.items
         .filter(item => item.track && item.track.uri)
