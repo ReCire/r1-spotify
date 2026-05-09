@@ -331,7 +331,7 @@ function renderArtist(app) {
   // Filter bar (not a scroll index item)
   const filterBar = document.createElement('div');
   filterBar.className = 'filter-bar';
-  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related'];
+  const filters = ['all', 'popular', 'albums', 'singles', 'appears on', 'related', 'about'];
   const a = state.artistData;
   const hasContent = {
     all: true,
@@ -339,7 +339,8 @@ function renderArtist(app) {
     albums: (a.albums || []).length > 0,
     singles: (a.singles || []).length > 0,
     'appears on': (a.appearsOn || []).length > 0,
-    related: (a.related || []).length > 0
+    related: (a.related || []).length > 0,
+    about: true
   };
   filters.filter(f => hasContent[f]).forEach(f => {
     const btn = document.createElement('button');
@@ -353,6 +354,33 @@ function renderArtist(app) {
     filterBar.appendChild(btn);
   });
   container.appendChild(filterBar);
+
+  let nextIdx = 1; // Start at 1 since hero is 0
+
+  // About card — render when filter is 'about' or 'all'
+  if (state.discographyFilter === 'about' || state.discographyFilter === 'all') {
+    const aboutCard = document.createElement('div');
+    aboutCard.className = `content-card about-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
+    aboutCard.dataset.idx = nextIdx;
+
+    const genres = (state.artistData.genres || []);
+    const popularity = state.artistData.popularity || 0;
+    const genreText = genres.length ? genres.slice(0, 4).map(g => capitalize(g)).join(' · ') : 'No genre data';
+    const popularityBar = `<div class="popularity-bar"><div class="popularity-fill" style="width:${popularity}%"></div></div>`;
+
+    aboutCard.innerHTML = `
+      <div class="content-card-overlay"></div>
+      <div class="content-card-content about-content">
+        <div class="content-card-labels">
+          <div class="content-card-name">About</div>
+          <div class="about-genres">${genreText}</div>
+          <div class="about-popularity">Popularity ${popularityBar}</div>
+        </div>
+      </div>
+    `;
+    container.appendChild(aboutCard);
+    nextIdx++;
+  }
 
   // Content cards (idx 1+)
   let allItems = [];
@@ -387,8 +415,8 @@ function renderArtist(app) {
   } else {
     allItems.forEach((item, i) => {
       const card = document.createElement('div');
-      card.className = `content-card ${i + 1 === state.scrollIndex ? 'focused' : ''}`;
-      card.dataset.idx = i + 1;
+      card.className = `content-card ${nextIdx === state.scrollIndex ? 'focused' : ''}`;
+      card.dataset.idx = nextIdx;
       card.style.backgroundImage = `url('${item.image}')`;
 
       let typeLabel = capitalize(item.type);
@@ -413,6 +441,7 @@ function renderArtist(app) {
       `;
       card.addEventListener('click', () => handleContentCardClick(item));
       container.appendChild(card);
+      nextIdx++;
     });
   }
 
@@ -745,21 +774,12 @@ export function getListLength() {
     let count = 1; // hero card
     const d = state.discographyFilter;
     const a = state.artistData;
+    if (d === 'all' || d === 'about') count += 1; // about card
     if (d === 'all' || d === 'popular') count += (a.topTracks || []).length;
     if (d === 'all' || d === 'albums') count += (a.albums || []).length;
     if (d === 'all' || d === 'singles') count += (a.singles || []).length;
     if (d === 'all' || d === 'appears on') count += (a.appearsOn || []).length;
     if (d === 'all' || d === 'related') count += (a.related || []).length;
-    return count;
-  }
-  if (state.currentView === 'discography') {
-    if (!state.artistData) return 0;
-    let count = 0;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'popular') count += (state.artistData.topTracks || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'albums') count += (state.artistData.albums || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'singles') count += (state.artistData.singles || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'appears on') count += (state.artistData.appearsOn || []).length;
-    if (state.discographyFilter === 'all' || state.discographyFilter === 'related') count += (state.artistData.related || []).length;
     return count;
   }
   return 0;
